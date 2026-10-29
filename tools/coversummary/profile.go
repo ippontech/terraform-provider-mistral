@@ -34,6 +34,7 @@ func (c fileCoverage) percent() float64 {
 	return percent(c.Covered, c.Total)
 }
 
+// percent returns covered as a share of total, in percent, 0 when total is 0.
 func percent(covered, total int) float64 {
 	if total == 0 {
 		return 0
@@ -149,6 +150,7 @@ func blockLines(pos string) (int, int, error) {
 	return startLine, endLine, nil
 }
 
+// lineOf returns the line of a "line.column" position.
 func lineOf(lineCol string) (int, error) {
 	l, _, ok := strings.Cut(lineCol, ".")
 	if !ok {

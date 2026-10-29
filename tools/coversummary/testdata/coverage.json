@@ -1,8 +1,6 @@
 {
   "diff_min": 75,
-  "total_target": 75,
-  "ratchet_tolerance": 0.5,
-  "baseline_file": "baseline",
+  "total_target": 65,
   "package_min": null,
   "exclude": ["main.go", "internal/helper/"]
 }

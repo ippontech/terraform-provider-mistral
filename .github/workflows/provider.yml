@@ -199,12 +199,14 @@ jobs:
         run: |
           git diff --exit-code || (echo "Running 'make generate' produced changes. Please run it locally and commit the result." && exit 1)
 
-  # The coverage gate (.coverage.json, tools/coversummary): at least 75% of the
-  # statements a pull request changes are covered, the total stays at or above
-  # .coverage-baseline minus the tolerance and never under 80% (the baseline
-  # is past it), and every package stays at 80% or more (package_min). A
+  # The coverage gate (.coverage.json, tools/coversummary), three fixed
+  # thresholds: at least 75% of the statements a pull request changes are
+  # covered (diff_min), the total is at 80% or more (total_target), and so is
+  # every package (package_min). There is no ratchet on the total: near full
+  # coverage, it failed pull requests on statements no test can reach, and the
+  # diff and package rules already catch untested new code and a real drop. A
   # required check: it fails, it does not warn. The summary lists each
-  # package's coverage, least covered first.
+  # package's and each resource file's coverage, least covered first.
   coverage:
     needs: test
     runs-on: ubuntu-latest
@@ -241,14 +243,11 @@ jobs:
 
       # BASE_SHA is the base branch's commit of the pull request, or of the
       # merge queue entry. The diff rule reads the lines the change adds or
-      # modifies; the floor rule reads the base branch's baseline, absent
-      # until this gate lands.
+      # modifies since its merge base with HEAD.
       - name: Coverage gate
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
           git diff --unified=0 --no-color "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/changes.diff"
-          git show "${BASE_SHA}:.coverage-baseline" > "${RUNNER_TEMP}/base-baseline" 2> /dev/null || rm -f "${RUNNER_TEMP}/base-baseline"
           go run -C tools ./coversummary -config ../.coverage.json \
-            -diff "${RUNNER_TEMP}/changes.diff" -base-baseline "${RUNNER_TEMP}/base-baseline" \
-            ../coverage.out >> "${GITHUB_STEP_SUMMARY}"
+            -diff "${RUNNER_TEMP}/changes.diff" ../coverage.out >> "${GITHUB_STEP_SUMMARY}"
