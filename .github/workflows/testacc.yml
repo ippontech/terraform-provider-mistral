@@ -1,0 +1,75 @@
+name: Acceptance Tests
+
+# The acceptance tests (TF_ACC=1) and the live native tests, against a
+# dedicated Mistral organization: after every merge to main, every week, and
+# on demand. Never on a pull request: they create real objects with the keys
+# of the protected acctest environment. They run once the repository variable
+# MISTRAL_ACCTEST is "true", which is set when the test organization exists;
+# MISTRAL_ADMIN_API_KEY may stay empty, and the Admin API tests then skip.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '17 4 * * 3'
+  workflow_dispatch:
+
+permissions: {}
+
+# One run at a time against the test organization.
+concurrency:
+  group: acctest
+  cancel-in-progress: false
+
+jobs:
+  testacc:
+    if: vars.MISTRAL_ACCTEST == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    environment: acctest
+    permissions:
+      contents: read
+    env:
+      CHECKPOINT_DISABLE: '1'
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            api.mistral.ai:443
+            github.com:443
+            proxy.golang.org:443
+            release-assets.githubusercontent.com:443
+            releases.hashicorp.com:443
+            storage.googleapis.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No cache: this job holds the keys of the test organization.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: Run the acceptance tests
+        run: make testacc
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_ADMIN_API_KEY: ${{ secrets.MISTRAL_ADMIN_API_KEY }}
+
+      # The test files without mock_provider, against the live API.
+      - name: Run the live native tests
+        run: make terraform-test
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_ADMIN_API_KEY: ${{ secrets.MISTRAL_ADMIN_API_KEY }}

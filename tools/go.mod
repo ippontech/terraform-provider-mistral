@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/hashicorp/terraform-plugin-docs v0.25.0
 	github.com/uudashr/gocognit v1.3.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -53,5 +54,4 @@ require (
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	gopkg.in/yaml.v2 v2.3.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

@@ -86,4 +86,13 @@ terraform-test: install .dev.tfrc
 	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests init -backend=false && \
 	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests test $(addprefix -filter=,$(LIVE_TESTS))
 
-.PHONY: build install fmt tidy-check lint complexity generate test cover testacc terraform-fmt-check terraform-validate terraform-test-mock terraform-test
+# Compares the operations the provider calls with the fingerprints of
+# tools/specdrift/fingerprints.txt, against the live specification (never
+# committed: it has no licence). SPECDRIFT_FLAGS=-update rewrites them.
+SPEC_URL ?= https://docs.mistral.ai/openapi.yaml
+spec-drift:
+	@spec=$$(mktemp); trap 'rm -f "$$spec"' EXIT; \
+	curl -sSf --retry 3 -o "$$spec" $(SPEC_URL) && \
+	go run -C tools ./specdrift -spec "$$spec" -root .. $(SPECDRIFT_FLAGS)
+
+.PHONY: spec-drift build install fmt tidy-check lint complexity generate test cover testacc terraform-fmt-check terraform-validate terraform-test-mock terraform-test

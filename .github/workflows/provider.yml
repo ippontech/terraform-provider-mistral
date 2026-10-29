@@ -199,6 +199,12 @@ jobs:
         run: |
           git diff --exit-code || (echo "Running 'make generate' produced changes. Please run it locally and commit the result." && exit 1)
 
+      # A route a fake starts serving must have its fingerprint in
+      # tools/specdrift/fingerprints.txt, which the weekly spec-drift.yml
+      # compares with Mistral's specification. Offline: no specification here.
+      - name: Check the spec-drift fingerprints
+        run: go run -C tools ./specdrift -routes-only -root ..
+
   # The coverage gate (.coverage.json, tools/coversummary), three fixed
   # thresholds: at least 75% of the statements a pull request changes are
   # covered (diff_min), the total is at 80% or more (total_target), and so is

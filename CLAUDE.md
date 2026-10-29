@@ -14,7 +14,7 @@ Terraform and OpenTofu provider for Mistral AI, in Go, on the Terraform Plugin F
 | `internal/sdktest` | The fake Mistral API for unit tests (test helper, never in the binary). |
 | `internal/providertest` | Provider factories and configuration pointed at the fake (test helper). |
 | `internal/acctest` | Helpers for acceptance tests against the live API (test helper). |
-| `tools/` | A Go module of its own: tfplugindocs, the complexity ratchet, the coverage gate. |
+| `tools/` | A Go module of its own: tfplugindocs, the complexity ratchet, the coverage gate, `specdrift` (fingerprints of the operations the provider calls). |
 | `templates/`, `examples/` | Sources of `docs/`, which `make generate` rebuilds. Never edit `docs/` by hand. |
 | `tests/` | Terraform native tests; `tests/versions.tf` is their root module. |
 
@@ -26,7 +26,7 @@ The client is written by hand: the published OpenAPI specification (`https://doc
 2. Register its factory in `internal/provider/registry.go`, with on the same line its `Audience` (`providerdata.Workspace` or `providerdata.Admin`), its `Stability` (`beta` when the specification tags its endpoints `beta.`) and its `Live` coverage (`fakeOnly` until an acceptance test has passed against the live API).
 3. Add an example: `examples/resources/<name>/resource.tf` (or `examples/data-sources/<name>/data-source.tf`) holds only the blocks the Registry page shows; the `terraform {}` block goes in a sibling `versions.tf` with `required_version = ">= 1.11"` and the provider constraint `version = "~> 0.1"` (tflint). Every `output` has a `description` (tflint). A resource also gets `import-by-string-id.tf` and `import-by-identity.tf`, which the template includes; `make terraform-validate` (`tools/validate-examples.sh`) validates each one in a copy of the directory without the other, since Terraform refuses two imports of one address.
 4. Add `templates/resources/<name>.md.tmpl` (or `templates/data-sources/`) with its `subcategory` from *Naming and grouping*, the first sentence saying what the object is and which credential it needs, and the callouts of its registration: the not-verified banner (`~> **Not verified against the live API.**`) for a `fakeOnly` type, the preview note (`-> **Public preview at Mistral.**`) for a `beta` one. `internal/provider/docs_test.go` fails on a page that contradicts the registry, and on a template or example that no registered type owns.
-5. Write the tests of *Testing*, then run `make` (format, tidy, lint, complexity, tests, docs) and `pre-commit run -a`.
+5. Write the tests of *Testing*, then run `make` (format, tidy, lint, complexity, tests, docs) and `pre-commit run -a`. A route a fake starts serving needs its fingerprint: `make spec-drift SPECDRIFT_FLAGS=-update`, then commit `tools/specdrift/fingerprints.txt` (CI checks the routes offline; `spec-drift.yml` compares the fingerprints with Mistral's specification every week).
 6. Note in `internal/services/<area>/CLAUDE.md` what the next contributor would otherwise rediscover: API quirks, documentation pages, decisions and their reasons.
 
 ## Naming and grouping
@@ -129,6 +129,7 @@ make complexity # cognitive complexity ratchet against origin/main
 make generate   # terraform fmt of the examples, then docs/
 make terraform-validate terraform-test-mock   # offline Terraform checks
 make testacc    # TF_ACC=1: live API, creates real objects
+make spec-drift # the operations the provider calls against the live specification
 ```
 
 Tool versions are in `mise.toml`; CI pins the same ones.
