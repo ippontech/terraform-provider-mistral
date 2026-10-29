@@ -3,6 +3,8 @@
 # against. A file with a mock_provider block runs offline on every pull
 # request; a file without one calls the live API, in testacc.yml only.
 terraform {
+  required_version = ">= 1.11"
+
   required_providers {
     mistral = {
       source = "ippontech/mistral"
