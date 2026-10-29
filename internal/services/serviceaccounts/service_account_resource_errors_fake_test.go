@@ -211,3 +211,23 @@ resource "mistral_service_account" "worker" {
 	})
 	t.Cleanup(func() { f.AssertCalled("", 0) })
 }
+
+// Importing an account the API does not have reports it as missing, not as a
+// provider error about the resource identity.
+func TestServiceAccountResourceImportOfAMissingAccount(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: accountConfig(minimalAccount)},
+			{
+				ResourceName:  accountAddr,
+				ImportState:   true,
+				ImportStateId: "00000000-0000-4000-8000-999999999999",
+				ExpectError:   regexp.MustCompile(`Cannot\s+import\s+non-existent\s+remote\s+object`),
+			},
+		},
+	})
+}
