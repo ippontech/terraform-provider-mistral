@@ -196,6 +196,17 @@ func (r *ServiceAccountResource) Create(ctx context.Context, req resource.Create
 	resp.Diagnostics.Append(setServiceAccountState(ctx, accountState(*sa, plan.RoleIDs), &resp.State, resp.Identity)...)
 }
 
+// removeGone removes the account from the state after setting its identity:
+// during an import, terraform-plugin-framework v1.19.0 fails a Read that
+// removes the resource without one, instead of Terraform's "Cannot import
+// non-existent remote object".
+func removeGone(ctx context.Context, resp *resource.ReadResponse, id types.String) {
+	if resp.Identity != nil {
+		resp.Diagnostics.Append(resp.Identity.Set(ctx, serviceAccountIdentity{ID: id})...)
+	}
+	resp.State.RemoveResource(ctx)
+}
+
 // Read refreshes the account and its roles, and removes the resource when
 // either call answers 404 or the account is marked deleted.
 func (r *ServiceAccountResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -209,7 +220,7 @@ func (r *ServiceAccountResource) Read(ctx context.Context, req resource.ReadRequ
 	// the API may keep deleted accounts. One that GET still returns is gone
 	// all the same.
 	if client.IsNotFound(err) || (err == nil && sa.DeletedAt != nil) {
-		resp.State.RemoveResource(ctx)
+		removeGone(ctx, resp, id)
 		return
 	}
 	if err != nil {
@@ -219,7 +230,7 @@ func (r *ServiceAccountResource) Read(ctx context.Context, req resource.ReadRequ
 	roles, err := r.client.ListServiceAccountRoles(ctx, id.ValueString())
 	// The account was deleted between the two calls.
 	if client.IsNotFound(err) {
-		resp.State.RemoveResource(ctx)
+		removeGone(ctx, resp, id)
 		return
 	}
 	if err != nil {
