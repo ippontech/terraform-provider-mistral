@@ -1,0 +1,31 @@
+## Coverage gate
+
+**The gate fails**: see the rules marked FAIL.
+
+| Rule | Measured | Required | Result |
+|---|---|---|---|
+| Diff: covered share of the statements the change touches | not measured (no diff given) | at least 75% | skipped |
+| Total: coverage outside the exclusions | 66.67% (12 of 18) | at least 70% | **FAIL** |
+| Packages: coverage of each package | lowest 66.7% (`internal/a`); 1 of 1 under 70% | none yet: `package_min` is not set | monitored |
+
+The total is under the 70% of `total_target`: add tests, starting with the least covered packages and files, which the tables below list first.
+
+### Coverage per package
+
+Every package outside the exclusions, least covered first. Monitored, not enforced: `package_min` in `.coverage.json` is not set yet. Once it is set to 70, every package must stay at 70% or more.
+
+| Package | Statements | Covered | Coverage | Points to 70% |
+|---|---:|---:|---:|---:|
+| `internal/a` | 18 | 12 | 66.7% | 3.3 |
+
+Excluded from every rule: `main.go`, `internal/helper/`.
+
+## Unit test coverage
+
+**66.7%** of 18 statements across 3 files, outside the exclusions of `.coverage.json` (`go test` without `TF_ACC`: acceptance tests are skipped).
+
+### Files matching `_(resource|data_source)\.go$` (1), least covered first
+
+| File | Statements | Covered | Coverage |
+|---|---:|---:|---:|
+| `internal/a/a_resource.go` | 6 | 4 | 66.7% |

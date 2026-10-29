@@ -18,6 +18,7 @@ type packageCoverage struct {
 	total, covered int
 }
 
+// percent returns the share of covered statements of the package.
 func (p packageCoverage) percent() float64 { return percent(p.covered, p.total) }
 
 // packagesOf groups the files of the profile by package, outside the
