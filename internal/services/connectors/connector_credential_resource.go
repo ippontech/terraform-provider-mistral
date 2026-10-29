@@ -212,15 +212,21 @@ func (r *ConnectorCredentialResource) Read(ctx context.Context, req resource.Rea
 		return
 	}
 	found, err := r.find(ctx, state.ConnectorID.ValueString(), state.Scope.ValueString(), state.Name.ValueString())
-	if client.IsNotFound(err) {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-	if err != nil {
+	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Cannot read the connector credentials", err.Error())
 		return
 	}
+	// A 404 means the connector is gone, and its credentials with it.
 	if found == nil {
+		// Set the identity before removing: during an import,
+		// terraform-plugin-framework v1.19.0 fails a Read that removes the
+		// resource without one, instead of Terraform's "Cannot import
+		// non-existent remote object".
+		if resp.Identity != nil {
+			resp.Diagnostics.Append(resp.Identity.Set(ctx, connectorCredentialIdentity{
+				ConnectorID: state.ConnectorID, Scope: state.Scope, Name: state.Name,
+			})...)
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
