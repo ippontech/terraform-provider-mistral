@@ -62,5 +62,28 @@ release:
       name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
   # If you want to manually examine the release before its live, uncomment this line:
   # draft: true
+# The release notes: the commits since the previous tag, grouped by their
+# Conventional Commits type (CONTRIBUTING.md), which every pull request checks.
+# A "!" after the type marks a breaking change, in 0.x as after 1.0.0.
 changelog:
-  disable: true
+  use: git
+  sort: asc
+  abbrev: 7
+  groups:
+    - title: Breaking changes
+      regexp: '^.*?[[:word:]]+(\([^)]+\))??!:.+$'
+      order: 0
+    - title: Features
+      regexp: '^.*?feat(\([^)]+\))??:.+$'
+      order: 1
+    - title: Fixes
+      regexp: '^.*?fix(\([^)]+\))??:.+$'
+      order: 2
+    - title: Performance
+      regexp: '^.*?perf(\([^)]+\))??:.+$'
+      order: 3
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - '^.*?(chore|ci|test|style)(\([^)]+\))??:.+$'

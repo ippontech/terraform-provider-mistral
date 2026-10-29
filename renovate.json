@@ -18,7 +18,6 @@
     "github-actions",
     "gomod",
     "mise",
-    "npm",
     "pre-commit",
     "custom.regex"
   ],
@@ -45,7 +44,7 @@
       "groupSlug": "go-deps"
     },
     {
-      "description": "Go toolchain and indirect module updates change the shipped binary like direct ones, so they get the fix type and semantic-release publishes a patch release with them. The :semanticPrefixFixDepsChoreOthers preset of config:recommended gives fix to the require depType only, chore (no release) to the rest, so a standard library security fix would never be released.",
+      "description": "Go toolchain and indirect module updates change the shipped binary like direct ones, so they get the fix type, which lists them under Fixes in the release notes and calls for a patch release. The :semanticPrefixFixDepsChoreOthers preset of config:recommended gives fix to the require depType only, chore to the rest, so a standard library security fix would be filtered out of the notes.",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang", "toolchain", "indirect"],
       "semanticCommitType": "fix"
@@ -66,14 +65,11 @@
       "groupSlug": "ci-tools"
     },
     {
-      "description": "The release tooling (GoReleaser, semantic-release and its plugins, the GPG import action) runs in the jobs that sign and publish: a human reviews each bump, in a pull request of its own.",
+      "description": "The release tooling (GoReleaser and the GPG import action) runs in the job that signs and publishes: a human reviews each bump, in a pull request of its own.",
       "matchPackageNames": [
         "goreleaser/goreleaser",
         "goreleaser/goreleaser-action",
-        "crazy-max/ghaction-import-gpg",
-        "semantic-release",
-        "/^@semantic-release//",
-        "conventional-changelog-conventionalcommits"
+        "crazy-max/ghaction-import-gpg"
       ],
       "groupName": null,
       "labels": ["dependencies", "release-tooling"]

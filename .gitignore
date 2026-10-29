@@ -23,9 +23,6 @@ coverage-diff.out
 .gocache/
 .gobin/
 
-# Node (semantic-release tooling; tools/release/package-lock.json is committed)
-node_modules/
-
 # Editors and OS
 .idea/
 .vscode/
