@@ -84,6 +84,16 @@ Unit tests need no credential and no network. Acceptance tests (`TestAcc` prefix
 
 For each data source: exact values, an empty list, two pages or more through the real `Read`, and the not-found error. For each bug fix: a test that fails without the fix. Tests call `t.Parallel()`; `make test` runs with `-race -shuffle=on`.
 
+**The helpers.**
+
+- **`internal/client`**: a typed call builds a `call` (method, path from `escapePath`, query, JSON `body` or multipart `form`, `audience`, and `idempotent: true` for a documented upsert) and passes it to `do`, which authenticates, retries by the policy above and decodes. Lists go through `walkCursor`, `walkPages` (first page 0 or 1, total or -1) or `walkOffset`, with `collect` or `find`. Errors are `*client.Error`; test them with `client.IsNotFound`, `IsConflict` or `StatusCode`. Client tests are internal (`package client`) and build their client with `newTestClient(srv)`, which carries the production rules with millisecond delays.
+- **`internal/sdktest`**: `NewServer(t)` with `Handle`/`Respond` routes in `net/http.ServeMux` syntax (`"GET /v1/agents/{agent_id}"`), `FailNext`, `FailNextWith`, `ResetNext`, `SetMaxRequests`, and the assertions `AssertCalled`, `AssertCredential` (`sdktest.APIKey` or `AdminKey`), `AssertQueries`, `AssertJSONBodies` (compared with `JSONDiff`: an absent key, null and `""` differ). Answers: `WriteJSON`, `WriteError` (`{"detail": "..."}`), `WriteValidationError` (422). State: `NewCollection(key)` (`Create`, `Put`, `Get`, `Patch`, `Delete`, `List`, `Len`), `NewUUID`, and the page helpers `PageOf`, `OffsetOf`, `CursorOf`, `QueryInt`. Multipart: `ReadParts`, `Request.Parts`.
+- **`internal/providertest`**: `ProviderFactories(srv)` (the provider pointed at the fake, with millisecond retries), `ProviderConfig()` (both dummy keys, so the environment never fills them) and `ExpectAction(addr, action)` (the planned action before the apply, an empty plan after it).
+- **`internal/acctest`**: `PreCheck(t)`, `PreCheckAdmin(t)` (skips without an Admin API key), `SkipUnlessAcc(t)`, `ProtoV6ProviderFactories`, `RandomName(prefix)`.
+- **Configure**: every resource and data source calls `providerdata.Configure(req.ProviderData, providerdata.Workspace, &resp.Diagnostics)` (or `Admin`) and returns when it gives nil.
+
+Fake-API tests live in `package <area>_test`, in files named `<name>_fake_test.go`, with one `fake_test.go` per service for its routes and handlers.
+
 **What a fake holds**, and nothing more:
 
 1. the transport contract: paths, methods, headers, credential, bodies, status codes, pagination;

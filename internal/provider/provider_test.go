@@ -5,6 +5,8 @@ package provider
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
+	"github.com/ippontech/terraform-provider-mistral/internal/client"
 	"github.com/ippontech/terraform-provider-mistral/internal/providerdata"
 )
 
@@ -91,6 +94,27 @@ func TestConfigureWithoutCredentialSucceeds(t *testing.T) {
 	}
 	if pd.UserAgent != "terraform-provider-mistral/test" {
 		t.Errorf("UserAgent = %q", pd.UserAgent)
+	}
+	if pd.Client == nil {
+		t.Error("Configure built no client")
+	}
+}
+
+func TestConfiguredClientCallsTheServerWithTheKeys(t *testing.T) {
+	clearEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer k" {
+			t.Errorf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	pd := providerData(t, configure(t, map[string]tftypes.Value{"api_key": str("k")},
+		WithServerURL(srv.URL), WithRetryPolicy(client.RetryPolicy{})))
+
+	if _, err := pd.Client.ListModels(context.Background()); client.StatusCode(err) != http.StatusInternalServerError {
+		t.Errorf("err = %v, want the fake's 500", err)
 	}
 }
 

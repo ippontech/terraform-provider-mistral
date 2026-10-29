@@ -12,6 +12,8 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+
+	"github.com/ippontech/terraform-provider-mistral/internal/client"
 )
 
 // Audience names the credential a type's endpoints accept (CLAUDE.md,
@@ -61,6 +63,9 @@ type ProviderData struct {
 	AdminAPIKey string
 	// UserAgent is sent on every request.
 	UserAgent string
+	// Client calls the API with both keys; each typed call picks the key of
+	// its endpoint.
+	Client *client.Client
 }
 
 // Credential returns the credential for a, or an error diagnostic naming the

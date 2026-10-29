@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/ippontech/terraform-provider-mistral/internal/client"
 	"github.com/ippontech/terraform-provider-mistral/internal/providerdata"
 )
 
@@ -29,7 +30,7 @@ const (
 	// DefaultServerURL is the API host every endpoint of the provider lives
 	// on. The regional hosts (api.eu.mistral.ai, api.us.mistral.ai) serve
 	// stateless inference only, none of the provider's objects.
-	DefaultServerURL = "https://api.mistral.ai"
+	DefaultServerURL = client.DefaultBaseURL
 
 	envAPIKey      = "MISTRAL_API_KEY"       //nolint:gosec // G101: the name of the variable, not a credential
 	envAdminAPIKey = "MISTRAL_ADMIN_API_KEY" //nolint:gosec // G101: the name of the variable, not a credential
@@ -47,6 +48,10 @@ type MistralProvider struct {
 	// serverURL, when set by WithServerURL, wins over the server_url
 	// argument and MISTRAL_SERVER_URL. Empty in every binary users run.
 	serverURL string
+
+	// retry is the client's retry policy: client.DefaultRetryPolicy, unless
+	// a test set another with WithRetryPolicy.
+	retry client.RetryPolicy
 }
 
 // Option changes how New builds the provider. Options are for tests only:
@@ -60,6 +65,14 @@ type Option func(*MistralProvider)
 func WithServerURL(serverURL string) Option {
 	return func(p *MistralProvider) {
 		p.serverURL = serverURL
+	}
+}
+
+// WithRetryPolicy replaces the client's retry policy, so a test that injects
+// 5xx answers does not wait the production backoff.
+func WithRetryPolicy(policy client.RetryPolicy) Option {
+	return func(p *MistralProvider) {
+		p.retry = policy
 	}
 }
 
@@ -144,6 +157,13 @@ func (p *MistralProvider) Configure(ctx context.Context, req provider.ConfigureR
 		AdminAPIKey: resolve(data.AdminAPIKey, envAdminAPIKey, ""),
 		UserAgent:   "terraform-provider-mistral/" + p.version,
 	}
+	pd.Client = client.New(client.Config{
+		BaseURL:     pd.ServerURL,
+		APIKey:      pd.APIKey,
+		AdminAPIKey: pd.AdminAPIKey,
+		UserAgent:   pd.UserAgent,
+		Retry:       p.retry,
+	})
 	resp.ResourceData = pd
 	resp.DataSourceData = pd
 }
@@ -202,7 +222,7 @@ func (p *MistralProvider) DataSources(_ context.Context) []func() datasource.Dat
 // New returns the provider factory providerserver.Serve takes.
 func New(version string, opts ...Option) func() provider.Provider {
 	return func() provider.Provider {
-		p := &MistralProvider{version: version}
+		p := &MistralProvider{version: version, retry: client.DefaultRetryPolicy}
 		for _, opt := range opts {
 			opt(p)
 		}

@@ -6,6 +6,10 @@ package providerdata
 import (
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+
+	"github.com/ippontech/terraform-provider-mistral/internal/client"
 )
 
 func TestCredentialReturnsTheAudienceKey(t *testing.T) {
@@ -44,5 +48,25 @@ func TestAudienceString(t *testing.T) {
 	}
 	if got := Audience(0).envVar(); got != "" {
 		t.Errorf("Audience(0).envVar() = %q", got)
+	}
+}
+
+func TestConfigure(t *testing.T) {
+	c := client.New(client.Config{})
+	pd := &ProviderData{APIKey: "k", Client: c}
+
+	var diags diag.Diagnostics
+	if got := Configure(nil, Workspace, &diags); got != nil || diags.HasError() {
+		t.Errorf("Configure(nil) = %v, %v; want nil and no error before the provider is configured", got, diags)
+	}
+	if got := Configure(pd, Workspace, &diags); got != c || diags.HasError() {
+		t.Errorf("Configure(Workspace) = %v, %v", got, diags)
+	}
+	if got := Configure(pd, Admin, &diags); got != nil || !diags.HasError() {
+		t.Errorf("Configure(Admin) without an admin key = %v, %v", got, diags)
+	}
+	diags = nil
+	if got := Configure("not provider data", Workspace, &diags); got != nil || !diags.HasError() {
+		t.Errorf("Configure(wrong type) = %v, %v", got, diags)
 	}
 }
