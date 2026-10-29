@@ -281,18 +281,18 @@ type workspaceMembership struct {
 // user (GET /v1/admin/users/{user_id}), the narrowest read there is. It is
 // the one function to replace when Mistral adds a read of a membership.
 func findWorkspaceMember(ctx context.Context, cl *client.Client, workspaceID, userID string) (*workspaceMembership, error) {
-	memberships, err := cl.ListUserMemberships(ctx, userID)
+	user, err := cl.GetUser(ctx, userID)
 	if client.IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	i := slices.IndexFunc(memberships, func(m client.WorkspaceMembership) bool { return m.WorkspaceID == workspaceID })
+	i := slices.IndexFunc(user.Workspaces, func(w client.UserWorkspace) bool { return w.ID == workspaceID })
 	if i < 0 {
 		return nil, nil
 	}
-	names, err := roleNames(ctx, cl, memberships[i].RawRoles)
+	names, err := roleNames(ctx, cl, user.Workspaces[i].RawRoles)
 	if err != nil {
 		return nil, err
 	}
@@ -301,19 +301,21 @@ func findWorkspaceMember(ctx context.Context, cl *client.Client, workspaceID, us
 
 // roleNames turns the raw roles of a membership into the names the
 // configuration and the PATCH use. A membership reads its roles back as
-// UUIDs, which GET /v1/admin/roles names, or as the legacy codes A and M. A
+// UUIDs, or as the legacy codes A and M; the workspace roles of GET
+// /v1/admin/roles name the UUIDs, "the authoritative list of roles and their
+// UUIDs" (https://docs.mistral.ai/admin/identity-access/roles-permissions). A
 // raw role the list does not name is kept as it is, so that the plan shows
 // it and the next apply sets the configured roles.
 func roleNames(ctx context.Context, cl *client.Client, raw []string) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	roles, err := cl.ListWorkspaceRoles(ctx)
+	roles, err := cl.ListRoles(ctx)
 	if err != nil {
 		return nil, err
 	}
-	nameByID := make(map[string]string, len(roles))
-	for _, role := range roles {
+	nameByID := make(map[string]string, len(roles.WorkspaceRoles))
+	for _, role := range roles.WorkspaceRoles {
 		nameByID[role.ID] = role.Name
 	}
 	names := make([]string, 0, len(raw))

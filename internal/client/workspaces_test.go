@@ -180,51 +180,16 @@ func TestRemoveWorkspaceMembersSendsTheUsersInTheBody(t *testing.T) {
 	}
 }
 
-// The memberships of a user decode with their raw roles, and the workspace
-// roles with their UUIDs.
-func TestListUserMembershipsAndWorkspaceRoles(t *testing.T) {
-	t.Parallel()
-	srv := sdktest.NewServer(t)
-	srv.Respond("GET /v1/admin/users/{user_id}", http.StatusOK, map[string]any{
-		"uuid": "u-1", "email": "ada@example.com",
-		"workspaces": []any{map[string]any{"uuid": "ws-1", "name": "ML", "is_default": false, "raw_roles": []any{"r-dev", "A"}, "raw_role": "r-dev"}},
-	})
-	srv.Respond("GET /v1/admin/roles", http.StatusOK, map[string]any{
-		"workspace_roles":    []any{map[string]any{"name": "dev", "uuid": "r-dev", "description": "Studio", "is_custom_role": false}},
-		"organization_roles": []any{map[string]any{"name": "member", "uuid": "r-member", "description": "", "is_custom_role": false}},
-	})
-	c := newTestClient(srv)
-	ctx := context.Background()
-
-	memberships, err := c.ListUserMemberships(ctx, "u-1")
-	if err != nil || len(memberships) != 1 || memberships[0].WorkspaceID != "ws-1" || len(memberships[0].RawRoles) != 2 {
-		t.Errorf("ListUserMemberships = %+v, %v", memberships, err)
-	}
-	roles, err := c.ListWorkspaceRoles(ctx)
-	if err != nil || len(roles) != 1 || roles[0] != (WorkspaceRoleRef{ID: "r-dev", Name: "dev"}) {
-		t.Errorf("ListWorkspaceRoles = %+v, %v", roles, err)
-	}
-	srv.AssertCredential("", sdktest.AdminKey)
-}
-
 // Every call returns the API error, which the helpers classify.
 func TestWorkspaceCallsReturnTheAPIError(t *testing.T) {
 	t.Parallel()
 	srv := sdktest.NewServer(t)
-	srv.Respond("GET /v1/admin/users/{user_id}", http.StatusNotFound, map[string]any{"detail": "User not found"})
-	srv.Respond("GET /v1/admin/roles", http.StatusForbidden, map[string]any{"detail": "RBAC is not enabled"})
 	srv.Respond("PATCH /v1/admin/workspaces/{workspace_uuid}/users", http.StatusUnprocessableEntity, map[string]any{"detail": "Invalid role"})
 	srv.Respond("PATCH /v1/admin/workspaces/{workspace_uuid}", http.StatusNotFound, map[string]any{"detail": "Workspace not found"})
 	srv.Respond("POST /v1/admin/workspaces", http.StatusConflict, map[string]any{"detail": "Name taken"})
 	c := newTestClient(srv)
 	ctx := context.Background()
 
-	if _, err := c.ListUserMemberships(ctx, "u-1"); !IsNotFound(err) {
-		t.Errorf("ListUserMemberships err = %v, want a 404", err)
-	}
-	if _, err := c.ListWorkspaceRoles(ctx); StatusCode(err) != http.StatusForbidden {
-		t.Errorf("ListWorkspaceRoles err = %v, want a 403", err)
-	}
 	if err := c.PutWorkspaceMembers(ctx, "ws-1", nil); StatusCode(err) != http.StatusUnprocessableEntity {
 		t.Errorf("PutWorkspaceMembers err = %v, want a 422", err)
 	}
