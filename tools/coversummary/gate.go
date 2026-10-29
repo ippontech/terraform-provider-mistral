@@ -10,9 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,14 +23,9 @@ type config struct {
 	// DiffMin is the minimum covered share, in percent, of the statements a
 	// change touches.
 	DiffMin float64 `json:"diff_min"`
-	// TotalTarget is the total the module works towards; once the baseline
-	// reaches it, it is also a floor the total never goes under.
+	// TotalTarget is the minimum coverage, in percent, of all the statements
+	// outside the exclusions.
 	TotalTarget float64 `json:"total_target"`
-	// RatchetTolerance is how far, in points, the total may fall under the
-	// baseline (coverage moves a little with timing-dependent branches).
-	RatchetTolerance float64 `json:"ratchet_tolerance"`
-	// BaselineFile holds the baseline, relative to the configuration file.
-	BaselineFile string `json:"baseline_file"`
 	// PackageMin is the coverage, in percent, each package outside the
 	// exclusions must reach. While it is null, the summary lists every
 	// package and its distance to total_target, but nothing fails.
@@ -40,10 +33,11 @@ type config struct {
 	// Exclude lists module-relative paths left out of every rule: a
 	// directory when it ends with "/", a file otherwise.
 	Exclude []string `json:"exclude"`
-
-	baselinePath string
 }
 
+// loadConfig reads and checks the configuration at path. A field config does
+// not know is an error, so that a misspelt or obsolete setting fails instead
+// of being silently ignored.
 func loadConfig(path string) (config, error) {
 	var cfg config
 	data, err := os.ReadFile(filepath.Clean(path))
@@ -64,12 +58,6 @@ func loadConfig(path string) (config, error) {
 	if cfg.PackageMin != nil && (*cfg.PackageMin <= 0 || *cfg.PackageMin > 100) {
 		problems = append(problems, fmt.Sprintf("package_min must be null or in (0, 100], got %v", *cfg.PackageMin))
 	}
-	if cfg.RatchetTolerance < 0 || cfg.RatchetTolerance >= 100 {
-		problems = append(problems, fmt.Sprintf("ratchet_tolerance must be in [0, 100), got %v", cfg.RatchetTolerance))
-	}
-	if cfg.BaselineFile == "" {
-		problems = append(problems, "baseline_file is missing")
-	}
 	for _, e := range cfg.Exclude {
 		if e == "" || strings.HasPrefix(e, "/") || strings.HasPrefix(e, "./") || slices.Contains(strings.Split(e, "/"), "..") {
 			problems = append(problems, fmt.Sprintf("exclude entry %q is not a clean module-relative path", e))
@@ -79,7 +67,6 @@ func loadConfig(path string) (config, error) {
 		slices.Sort(problems)
 		return cfg, fmt.Errorf("%s: %s", path, strings.Join(problems, "; "))
 	}
-	cfg.baselinePath = filepath.Join(filepath.Dir(path), cfg.BaselineFile)
 	return cfg, nil
 }
 
@@ -91,32 +78,6 @@ func (c config) excluded(name string) bool {
 		}
 	}
 	return false
-}
-
-// readBaseline reads a baseline file: one percentage, e.g. "34.08".
-func readBaseline(path string) (float64, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return 0, err
-	}
-	v, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
-	if err != nil || v < 0 || v > 100 {
-		return 0, fmt.Errorf("%s: want a percentage between 0 and 100, got %q", path, strings.TrimSpace(string(data)))
-	}
-	return v, nil
-}
-
-// readOptionalBaseline is readBaseline for the base branch's file, which
-// does not exist before the gate lands.
-func readOptionalBaseline(path string) (*float64, error) {
-	v, err := readBaseline(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &v, nil
 }
 
 // lineRange is an inclusive range of line numbers.
@@ -188,6 +149,7 @@ func (p *diffParser) header(text string) error {
 // hunkCounts counts the content lines a hunk still expects on each side.
 type hunkCounts struct{ oldLines, newLines int }
 
+// open reports whether the hunk still expects content lines.
 func (h hunkCounts) open() bool { return h.oldLines > 0 || h.newLines > 0 }
 
 // consume counts one content line of the hunk. It reports false for a line
@@ -244,6 +206,8 @@ func hunkHeader(s string) (oldCount, newStart, newCount int, err error) {
 	return oldCount, newStart, newCount, nil
 }
 
+// hunkRange parses one side of a hunk header, "start[,count]"; a missing
+// count is 1.
 func hunkRange(s string) (start, count int, err error) {
 	startText, countText, hasCount := strings.Cut(s, ",")
 	if start, err = strconv.Atoi(startText); err != nil {
@@ -260,10 +224,8 @@ func hunkRange(s string) (start, count int, err error) {
 
 // gateInput is what the rules read besides the profile.
 type gateInput struct {
-	config       config
-	baseline     float64
-	baseBaseline *float64               // nil when unknown
-	changes      map[string][]lineRange // nil when no diff was given
+	config  config
+	changes map[string][]lineRange // nil when no diff was given
 }
 
 // changedFile is the diff rule's view of one changed file.
@@ -273,39 +235,39 @@ type changedFile struct {
 	uncovered        []lineRange // blocks touched by the change that no test ran
 }
 
+// gateResult is what evaluate measured, from which the verdicts and the
+// report follow.
 type gateResult struct {
 	in gateInput
 
-	total, totalCovered int
+	total, totalCovered int               // statements outside the exclusions
 	packages            []packageCoverage // least covered first
 
-	diffChecked                bool
-	diffChanged, diffCovered   int
-	diffFiles                  []changedFile
-	diffIgnored                int // changed Go files out of the rule: tests and exclusions
-	floor                      float64
-	floorAtTarget              bool
-	baselineLowered            bool
-	baselineUnderReachedTarget bool
+	diffChecked              bool
+	diffChanged, diffCovered int
+	diffFiles                []changedFile
+	diffIgnored              int // changed Go files out of the rule: tests and exclusions
 }
 
+// totalPercent is the coverage of the statements outside the exclusions.
 func (r gateResult) totalPercent() float64 { return percent(r.totalCovered, r.total) }
-func (r gateResult) diffPercent() float64  { return percent(r.diffCovered, r.diffChanged) }
 
+// diffPercent is the covered share of the statements the change touches.
+func (r gateResult) diffPercent() float64 { return percent(r.diffCovered, r.diffChanged) }
+
+// diffOK is the diff rule. It holds when no diff was given or when the
+// change touches no statement, since there is then nothing to measure.
 func (r gateResult) diffOK() bool {
 	return !r.diffChecked || r.diffChanged == 0 || r.diffPercent() >= r.in.config.DiffMin
 }
 
-func (r gateResult) totalOK() bool {
-	// A hair of slack for the float arithmetic of baseline - tolerance.
-	return r.totalPercent() >= r.floor-1e-9
-}
+// totalOK is the total rule. It needs no slack for float error: percent
+// rounds the exact share once, as decoding total_target rounds the decimal,
+// so a total exactly at the target is equal to it.
+func (r gateResult) totalOK() bool { return r.totalPercent() >= r.in.config.TotalTarget }
 
-func (r gateResult) baselineOK() bool { return !r.baselineUnderReachedTarget }
-
-func (r gateResult) passed() bool {
-	return r.diffOK() && r.totalOK() && r.baselineOK() && r.packagesOK()
-}
+// passed reports whether every rule holds.
+func (r gateResult) passed() bool { return r.diffOK() && r.totalOK() && r.packagesOK() }
 
 // evaluate applies the rules.
 func evaluate(in gateInput, files map[string]*fileCoverage, trim string) gateResult {
@@ -319,17 +281,6 @@ func evaluate(in gateInput, files map[string]*fileCoverage, trim string) gateRes
 		r.totalCovered += fc.Covered
 	}
 	r.packages = packagesOf(files, trim, cfg.excluded)
-
-	r.floor = in.baseline - cfg.RatchetTolerance
-	if in.baseline >= cfg.TotalTarget {
-		r.floorAtTarget = true
-		r.floor = math.Max(r.floor, cfg.TotalTarget)
-	}
-	if in.baseBaseline != nil {
-		r.baselineLowered = in.baseline < *in.baseBaseline
-		r.baselineUnderReachedTarget = *in.baseBaseline >= cfg.TotalTarget && in.baseline < cfg.TotalTarget
-	}
-
 	if in.changes != nil {
 		r.evaluateDiff(files, trim)
 	}
@@ -391,10 +342,7 @@ func touches(ranges []lineRange, b blockCount) bool {
 	return false
 }
 
-// floor2 truncates a percentage to two decimals, the precision of the
-// baseline file.
-func floor2(v float64) float64 { return math.Floor(v*100+1e-9) / 100 }
-
+// verdict is the Result cell of a rule that holds or not.
 func verdict(ok bool) string {
 	if ok {
 		return "pass"
@@ -407,7 +355,7 @@ func writeGate(w io.Writer, r gateResult) error {
 	cfg := r.in.config
 	var b strings.Builder
 	writeRules(&b, r)
-	writeAdvice(&b, r)
+	writeTotalAdvice(&b, r)
 	writeChangedFiles(&b, r)
 	writePackages(&b, r)
 
@@ -441,44 +389,20 @@ func writeRules(b *strings.Builder, r gateResult) {
 			r.diffPercent(), r.diffCovered, r.diffChanged, cfg.DiffMin, verdict(r.diffOK()))
 	}
 
-	required := fmt.Sprintf("at least %.2f%% (baseline %.2f minus %g)", r.floor, r.in.baseline, cfg.RatchetTolerance)
-	if r.floorAtTarget {
-		required = fmt.Sprintf("at least %.2f%% (baseline %.2f minus %g, never under the %g%% floor)", r.floor, r.in.baseline, cfg.RatchetTolerance, cfg.TotalTarget)
-	}
-	fmt.Fprintf(b, "| Ratchet: total outside the exclusions | %.2f%% (%d of %d) | %s | %s |\n",
-		r.totalPercent(), r.totalCovered, r.total, required, verdict(r.totalOK()))
-
-	base := "base branch baseline unknown"
-	if r.in.baseBaseline != nil {
-		base = fmt.Sprintf("base branch: %.2f", *r.in.baseBaseline)
-	}
-	fmt.Fprintf(b, "| Floor: the baseline never goes back under %g%% once reached | %.2f (%s) | not under %g once the base reached it | %s |\n",
-		cfg.TotalTarget, r.in.baseline, base, cfg.TotalTarget, verdict(r.baselineOK()))
+	// Two decimals where the other rows have one: a change moves the total by
+	// hundredths of a point, and near the target they decide the verdict.
+	fmt.Fprintf(b, "| Total: coverage outside the exclusions | %.2f%% (%d of %d) | at least %g%% | %s |\n",
+		r.totalPercent(), r.totalCovered, r.total, cfg.TotalTarget, verdict(r.totalOK()))
 	writePackageRule(b, r)
 	b.WriteString("\n")
 }
 
-// writeAdvice says what the author can do: how far the target is, a gain to
-// lock in, a lowered baseline, a total or a baseline to restore.
-func writeAdvice(b *strings.Builder, r gateResult) {
-	cfg := r.in.config
-	if !r.floorAtTarget {
-		fmt.Fprintf(b, "The target is %g%%: the baseline is %.2f points away. Once the baseline reaches it, the total may never drop below %g%%.\n\n",
-			cfg.TotalTarget, cfg.TotalTarget-r.in.baseline, cfg.TotalTarget)
+// writeTotalAdvice says what to do when the total rule fails.
+func writeTotalAdvice(b *strings.Builder, r gateResult) {
+	if r.totalOK() {
+		return
 	}
-	if measured := floor2(r.totalPercent()); r.totalOK() && measured > r.in.baseline {
-		fmt.Fprintf(b, "This change raises the total to %.2f%% (%d of %d), above the baseline %.2f%%: set `%s` to `%.2f` (the total, truncated) in this pull request to lock the gain in.\n\n",
-			r.totalPercent(), r.totalCovered, r.total, r.in.baseline, cfg.BaselineFile, measured)
-	}
-	if r.baselineLowered && r.baselineOK() {
-		fmt.Fprintf(b, "This change lowers the baseline from %.2f to %.2f: reviewers must agree.\n\n", *r.in.baseBaseline, r.in.baseline)
-	}
-	if !r.totalOK() {
-		fmt.Fprintf(b, "The total fell under the ratchet: add tests, or, when the drop is deliberate (removed code that was well tested), lower `%s` in this pull request and say why.\n\n", cfg.BaselineFile)
-	}
-	if !r.baselineOK() {
-		fmt.Fprintf(b, "`%s` was lowered under %g%% after the base branch reached it; restore it.\n\n", cfg.BaselineFile, cfg.TotalTarget)
-	}
+	fmt.Fprintf(b, "The total is under the %g%% of `total_target`: add tests, starting with the least covered packages and files, which the tables below list first.\n\n", r.in.config.TotalTarget)
 }
 
 // writeChangedFiles lists the changed files of the diff rule, with the lines
