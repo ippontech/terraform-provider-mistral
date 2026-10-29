@@ -178,3 +178,29 @@ resource "mistral_agent" "router" {
 		}},
 	})
 }
+
+// Importing an agent the API does not have reports it as missing, not as a
+// provider error about the resource identity.
+func TestAgentResourceImportOfAMissingAgent(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: aliasConfig(minimalAgent)},
+			{
+				ResourceName:  agentAddr,
+				ImportState:   true,
+				ImportStateId: "ag_missing",
+				ExpectError:   regexp.MustCompile(`Cannot\s+import\s+non-existent\s+remote\s+object`),
+			},
+			{
+				ResourceName:  aliasAddr,
+				ImportState:   true,
+				ImportStateId: "ag_missing:production",
+				ExpectError:   regexp.MustCompile(`Cannot\s+import\s+non-existent\s+remote\s+object`),
+			},
+		},
+	})
+}
