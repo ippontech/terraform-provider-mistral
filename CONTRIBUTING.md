@@ -49,7 +49,7 @@ See *Adding a resource or data source* in `CLAUDE.md`. In short: the type and it
 
 ## Dependency updates
 
-Renovate opens the dependency pull requests, after a 3-day delay and without merging them. Go toolchain and indirect module updates are typed `fix(deps)` so that they trigger a release. A human reviews every bump of the release tooling.
+Renovate opens the dependency pull requests, after a 3-day delay and without merging them. Go toolchain and indirect module updates are typed `fix(deps)`, so that the release notes list them under Fixes and the next release is at least a patch. A human reviews every bump of the release tooling.
 
 ## Claude Code
 
