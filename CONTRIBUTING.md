@@ -26,12 +26,13 @@ Unit tests need neither. Never commit a key, and never paste one into an issue, 
 | `make complexity` | no production function above a cognitive complexity of 20 |
 | `make test` | unit tests against the fake API, with `-race -shuffle=on` |
 | `make cover` | the coverage gate: 75 % of changed statements, 80 % in total and per package |
+| `make mutation PKG=./internal/services/<area>` | mutation testing of one package with gremlins, reported in the pull request, not a gate |
 | `make generate` | the docs are up to date (CI fails on a diff) |
 | `make terraform-fmt-check terraform-validate terraform-test-mock` | the examples and the offline native tests |
 | `make testacc` | acceptance tests against the live API: they create real objects |
 | `make spec-drift` | the operations the provider calls against Mistral's live specification; `SPECDRIFT_FLAGS=-update` rewrites `tools/specdrift/fingerprints.txt` after a fake serves a new route |
 
-CI runs all of them except `make testacc` and `make spec-drift`, plus gitleaks, govulncheck, actionlint, poutine, tflint, `goreleaser check`, and an offline check that `tools/specdrift/fingerprints.txt` lists every route the fakes serve. `testacc.yml` runs the acceptance tests after each merge to `main` and every week; `spec-drift.yml` compares the fingerprints with Mistral's specification every week and opens an issue labelled `spec-drift` on a change.
+CI runs all of them except `make mutation`, `make testacc` and `make spec-drift`, plus gitleaks, govulncheck, actionlint, poutine, tflint, `goreleaser check`, and an offline check that `tools/specdrift/fingerprints.txt` lists every route the fakes serve. `testacc.yml` runs the acceptance tests after each merge to `main` and every week; `spec-drift.yml` compares the fingerprints with Mistral's specification every week and opens an issue labelled `spec-drift` on a change.
 
 ## Pull requests
 
@@ -40,7 +41,7 @@ CI runs all of them except `make testacc` and `make spec-drift`, plus gitleaks, 
 - **Code** follows *Code and comments* in `CLAUDE.md`: names that say what a value is, a doc comment on every type and function, a comment next to every choice the code cannot explain by itself.
 - **Merges** are squash or rebase only: the history of `main` is linear.
 - **Stacking.** A pull request that depends on another targets that pull request's branch, so its diff shows only its own changes. Once the base is merged, rebase it onto `main`.
-- **Description.** Say what changed, why, how it was tested, and what was not verified against the live API.
+- **Description.** Say what changed, why, how it was tested, with the measures of *Test quality* in `CLAUDE.md` (three shuffled runs of each changed package, hand mutations and the tests that catch them, the gremlins counts), and what was not verified against the live API.
 
 ## Checklist for a new resource or data source
 

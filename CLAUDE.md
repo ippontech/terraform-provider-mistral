@@ -119,12 +119,20 @@ Everything else is a canned response set up by the test that needs it. A fake en
 
 **Coverage gate** (`.coverage.json`): 75 % of the statements a pull request changes, 80 % in total and 80 % in every package, three fixed thresholds with no ratchet. The exclusions are the test helpers, `main.go` and `tools/`. Code that cannot be tested is a reason to restructure it, not to exclude it; the returns after `req.Plan.Get` and `req.State.Get` are the accepted exception.
 
+**Test quality**, measured in each pull request that changes code and reported in its description, never a CI gate:
+
+- `go test -race -shuffle=on -count=3` on each package the pull request changes, to catch a test that depends on order or timing;
+- hand mutations: for each behaviour the pull request adds or fixes, break it in the code (a field left out of a body, a 404 that no longer removes the resource), run the test that should catch it, name that test in the description, and revert;
+- mutation testing of each changed package, `make mutation PKG=./internal/services/<area>` (gremlins, pinned in `tools/go.mod`): the description gives the killed, lived and not covered counts, and each survivor either gets a test or is named as noise. Two kinds of noise are known: a mutated string concatenation does not compile and counts as killed, and a negated nil check can hang until the timeout. A not covered mutant sits on a line no test runs, which the coverage gate already reports;
+- a refactoring adds characterization tests first, in a commit of their own, and the commit that changes the code leaves them as they are.
+
 ## Commands
 
 ```sh
 make            # fmt, tidy-check, lint, complexity, test, install, generate
 make test       # unit tests (-race -shuffle=on)
 make cover      # unit tests, then the coverage gate against origin/main
+make mutation PKG=./internal/services/agents   # gremlins on one package, measured, not gated
 make lint       # golangci-lint, root and tools/ modules
 make complexity # cognitive complexity ratchet against origin/main
 make generate   # terraform fmt of the examples, then docs/
