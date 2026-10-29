@@ -1,0 +1,48 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Agents"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Manages an agent of the workspace of the standard API key (`api_key`): its model, instructions, tools and sampling arguments.
+
+-> **Public preview at Mistral.** The Agents API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This resource is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+## Versions
+
+Every update creates a new version of the agent, which becomes its active version; `version` gives its number, from 0 after the create. The API keeps the previous versions; destroying the resource deletes the agent. To keep conversations on a reviewed version while the agent moves on, point a `mistral_agent_alias` at that version.
+
+A change made in AI Studio also creates a version. The next plan shows it as drift, and the apply writes the configuration back as one more version.
+
+## Defaults
+
+When an argument is left out, the provider sends what the API would fill in: no tools, `tool_choice = "auto"` and every other sampling argument null, an empty `description` and `strict = false` for a function. A field the API leaves null, such as `temperature`, takes the default of the model.
+
+`function.parameters` and `response_format.json_schema.schema` are JSON documents: write them with `jsonencode`. The state keeps the configured text as long as the API returns the same JSON value, whatever its spacing or key order.
+
+## Not managed yet
+
+`guardrails` (moderation settings), `deployment_chat` (the agent in Le Chat) and the `authorization` of a connector tool are not arguments of this resource yet. A change made to them outside Terraform is kept by the next update only if the API keeps a field that the update leaves out, which is not documented.
+
+## Example Usage
+
+{{ tffile "examples/resources/mistral_agent/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+In Terraform 1.12 and later, an `import` block can use the resource identity:
+
+{{ tffile "examples/resources/mistral_agent/import-by-identity.tf" }}
+
+{{ .IdentitySchemaMarkdown | trimspace }}
+
+In Terraform and OpenTofu, an `import` block can use the agent ID:
+
+{{ tffile "examples/resources/mistral_agent/import-by-string-id.tf" }}

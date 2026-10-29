@@ -1,0 +1,36 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Agents"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Points an alias of an agent at one of its versions, with the standard API key (`api_key`). A conversation started with the alias uses that version, so that an agent can change while production stays on a reviewed version.
+
+-> **Public preview at Mistral.** The Agents API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This resource is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+The API creates and moves an alias with the same call. To avoid taking over an alias created outside Terraform, the create fails when the agent already has an alias by that name, and gives the `import` block that brings it under Terraform.
+
+The version must exist: a `version` the agent does not have fails the apply. Destroying the resource deletes the alias, not the version.
+
+## Example Usage
+
+{{ tffile "examples/resources/mistral_agent_alias/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+In Terraform 1.12 and later, an `import` block can use the resource identity:
+
+{{ tffile "examples/resources/mistral_agent_alias/import-by-identity.tf" }}
+
+{{ .IdentitySchemaMarkdown | trimspace }}
+
+In Terraform and OpenTofu, an `import` block can use `<agent_id>:<alias>`:
+
+{{ tffile "examples/resources/mistral_agent_alias/import-by-string-id.tf" }}

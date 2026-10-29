@@ -79,3 +79,12 @@ func TestGetModel(t *testing.T) {
 		t.Errorf("err = %v, want a 404", err)
 	}
 }
+
+func TestListModelsReturnsTheAPIError(t *testing.T) {
+	t.Parallel()
+	srv := sdktest.NewServer(t)
+	srv.Respond("GET /v1/models", http.StatusUnauthorized, map[string]any{"detail": "Invalid API Key"})
+	if _, err := newTestClient(srv).ListModels(context.Background()); StatusCode(err) != http.StatusUnauthorized {
+		t.Errorf("err = %v, want a 401", err)
+	}
+}

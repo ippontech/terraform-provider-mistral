@@ -72,13 +72,7 @@ terraform-fmt-check:
 # Each example directory against the provider just built: catches an attribute
 # renamed or removed in the schema that an example (and so the docs) still uses.
 terraform-validate: install .dev.tfrc
-	@failed=0; for dir in $(EXAMPLE_DIRS); do \
-		if out=$$(TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=$$dir validate -no-color 2>&1); then \
-			echo "valid:   $$dir"; \
-		else \
-			echo "INVALID: $$dir"; echo "$$out"; failed=1; \
-		fi; \
-	done; exit $$failed
+	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc tools/validate-examples.sh $(EXAMPLE_DIRS)
 
 # tests/ is the root module of the native tests: versions.tf maps the provider
 # source the test files resolve against.
