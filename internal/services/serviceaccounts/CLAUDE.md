@@ -45,4 +45,4 @@
 
 - `fake_test.go` serves the seven routes over an account collection and a role map per account; it refuses a name taken in the workspace (409) and a `PUT` without a role (422), and lists three assignable roles for `workspaceID`, none for any other workspace. `seed` stores an account made outside Terraform. Its clock moves one minute per write: `at(n)` is the n-th write.
 - `service_account_resource_fake_test.go` holds the lifecycle with the exact bodies, the replacements, the deletes outside Terraform and the imports; `_errors_` the 5xx, the partial update, the taken name, the read and delete errors and the validators; `assignable_service_account_roles_data_source_fake_test.go` the data source, and the resource fed by it; `service_account_internal_test.go` the helpers.
-- `TestAccServiceAccountResource` needs `MISTRAL_WORKSPACE_ID`, the workspace of `MISTRAL_API_KEY`, and skips without it.
+- `TestAccServiceAccountResource` needs `MISTRAL_ACC_WORKSPACE_ID` (`acctest.EnvWorkspaceID`), the workspace of `MISTRAL_API_KEY`, and skips without it.

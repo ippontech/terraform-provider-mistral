@@ -5,7 +5,6 @@ package serviceaccounts_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -22,13 +21,10 @@ import (
 // updates its description and its roles, empties the description, imports
 // it and destroys it, against the live API. The API takes the workspace ID in
 // the body, and no endpoint of the provider reads the workspace of the key:
-// MISTRAL_WORKSPACE_ID gives it, and the test skips without it.
+// acctest.EnvWorkspaceID gives it.
 func TestAccServiceAccountResource(t *testing.T) {
 	acctest.PreCheck(t)
-	workspace := os.Getenv("MISTRAL_WORKSPACE_ID")
-	if workspace == "" {
-		t.Skip("MISTRAL_WORKSPACE_ID is not set: the service account acceptance test needs the workspace of MISTRAL_API_KEY")
-	}
+	workspace := acctest.Fixture(t, acctest.EnvWorkspaceID)
 	name := acctest.RandomName("sa")
 	config := func(body string) string {
 		return fmt.Sprintf(`

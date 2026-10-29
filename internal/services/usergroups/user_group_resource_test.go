@@ -5,7 +5,6 @@ package usergroups_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -16,20 +15,6 @@ import (
 
 	"github.com/ippontech/terraform-provider-mistral/internal/acctest"
 )
-
-// accFixture returns the ID of an object of the test organization that this
-// area cannot create, from the environment variable name, and skips t
-// without it. The variables are those of the workspaces and API keys tests:
-// MISTRAL_ACC_MEMBER_USER_ID, a member of the organization that is not the
-// owner of the keys, and MISTRAL_ACC_WORKSPACE_ID, an existing workspace.
-func accFixture(t *testing.T, name string) string {
-	t.Helper()
-	v := os.Getenv(name)
-	if v == "" {
-		t.Skip(name + " is not set: this acceptance test needs an existing object of the test organization")
-	}
-	return v
-}
 
 // TestAccUserGroupResource creates a parent group and a child group, gives
 // the child a description, a parent and a role, then clears them, reads the
@@ -95,11 +80,10 @@ data "mistral_user_group" "parent" {
 	})
 }
 
-// TestAccUserGroupMemberResource adds the user of MISTRAL_ACC_MEMBER_USER_ID to a
+// TestAccUserGroupMemberResource adds the user of acctest.EnvMemberUserID to a
 // new group, imports the membership, and removes it, against the live API.
 func TestAccUserGroupMemberResource(t *testing.T) {
-	acctest.SkipUnlessAcc(t)
-	userID := accFixture(t, "MISTRAL_ACC_MEMBER_USER_ID")
+	userID := acctest.Fixture(t, acctest.EnvMemberUserID)
 	config := fmt.Sprintf(`
 resource "mistral_user_group" "this" {
   name = %q
@@ -127,11 +111,10 @@ resource "mistral_user_group_member" "this" {
 }
 
 // TestAccUserGroupWorkspaceResource gives a new group access to the
-// workspace of MISTRAL_ACC_WORKSPACE_ID, changes its roles in place,
+// workspace of acctest.EnvWorkspaceID, changes its roles in place,
 // imports the assignment, and removes it, against the live API.
 func TestAccUserGroupWorkspaceResource(t *testing.T) {
-	acctest.SkipUnlessAcc(t)
-	workspaceID := accFixture(t, "MISTRAL_ACC_WORKSPACE_ID")
+	workspaceID := acctest.Fixture(t, acctest.EnvWorkspaceID)
 	name := acctest.RandomName("access")
 	config := func(roles string) string {
 		return fmt.Sprintf(`

@@ -44,4 +44,4 @@
 
 - `fake_test.go` serves the thirteen routes over three collections (groups, memberships, assignments), with the `PATCH` semantics, the cascade of a group delete, the 404 of the lists of a missing group, pages from 1, and `search`. `seedGroup`, `seedMembers` and `seedAssignments` store objects created outside Terraform; `assertWalkedPage2` checks that a find reached the second page.
 - One `<name>_fake_test.go` per type: lifecycle with exact bodies and both imports, an import of an ID the fake does not hold, refusal to take over, deletion and drift outside Terraform, a 5xx sent once, errors, validation.
-- `user_group_resource_test.go` holds the acceptance tests. The member and workspace ones need `MISTRAL_ACC_MEMBER_USER_ID` and `MISTRAL_ACC_WORKSPACE_ID`, the variables of the workspaces and API keys tests, and skip without them.
+- `user_group_resource_test.go` holds the acceptance tests. The member and workspace ones need `MISTRAL_ACC_MEMBER_USER_ID` and `MISTRAL_ACC_WORKSPACE_ID` (`acctest.Fixture`), and skip without them.

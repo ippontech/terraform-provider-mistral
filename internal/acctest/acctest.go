@@ -53,6 +53,37 @@ func PreCheckAdmin(t *testing.T) {
 	}
 }
 
+// The objects of the test organization that the acceptance tests use but
+// cannot create, one environment variable each. No call of the provider
+// reads the workspace of a standard key, and the keys alone cannot tell which
+// users a test may add to a workspace or a group. testacc.yml passes them
+// from the variables of the acctest environment; Fixture reads them.
+const (
+	// EnvWorkspaceID is the ID of the workspace of MISTRAL_API_KEY.
+	EnvWorkspaceID = "MISTRAL_ACC_WORKSPACE_ID"
+	// EnvAdminUserID is the ID of an organization admin, whom the tests
+	// make the Workspace Admin of the workspaces they create.
+	EnvAdminUserID = "MISTRAL_ACC_ADMIN_USER_ID"
+	// EnvMemberUserID is the ID of another user of the organization, a
+	// member of the workspace of MISTRAL_API_KEY but not the owner of the
+	// keys: the tests add it to workspaces and groups, give it an API key
+	// and share a library with it.
+	EnvMemberUserID = "MISTRAL_ACC_MEMBER_USER_ID"
+)
+
+// Fixture returns the value of name, one of the Env variables, and skips t
+// when it is not set. It skips t unless TF_ACC is set first, so a unit test
+// run gives the usual reason.
+func Fixture(t *testing.T, name string) string {
+	t.Helper()
+	SkipUnlessAcc(t)
+	v := os.Getenv(name)
+	if v == "" {
+		t.Skipf("%s is not set: %s needs this object of the test organization", name, t.Name())
+	}
+	return v
+}
+
 // RandomName returns "tf-acc-<prefix>-<8 hex characters>", so concurrent
 // runs and leftovers of a failed run do not collide.
 func RandomName(prefix string) string {

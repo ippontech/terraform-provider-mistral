@@ -31,6 +31,11 @@ jobs:
       contents: read
     env:
       CHECKPOINT_DISABLE: '1'
+      # The objects of the test organization the tests cannot create
+      # (internal/acctest, Env*): IDs, not secrets, so environment variables.
+      MISTRAL_ACC_WORKSPACE_ID: ${{ vars.MISTRAL_ACC_WORKSPACE_ID }}
+      MISTRAL_ACC_ADMIN_USER_ID: ${{ vars.MISTRAL_ACC_ADMIN_USER_ID }}
+      MISTRAL_ACC_MEMBER_USER_ID: ${{ vars.MISTRAL_ACC_MEMBER_USER_ID }}
     steps:
       - name: Harden runner
         # Free for public repositories only: skipped while the repository is private.

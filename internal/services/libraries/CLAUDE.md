@@ -34,7 +34,7 @@
 - Whether a document past its `expires_at` answers 404 at once, and whether a re-upload of its content answers 200 with it.
 - The case of `share_with_type` and `role` in the list of grants, and whether the owner appears in it.
 - The 404 bodies of a missing library, document or grant, and the answer to a library ID that is not a UUID (probably 422).
-- `TestAccLibraryShareResource` needs `MISTRAL_TEST_SHARE_USER_ID`, a user of the organization other than the owner of the key.
+- `TestAccLibraryShareResource` needs `MISTRAL_ACC_MEMBER_USER_ID` (`acctest.EnvMemberUserID`), a user of the organization other than the owner of the key.
 
 ## Tests
 

@@ -104,14 +104,11 @@ data "mistral_library" "this" {
 
 // TestAccLibraryShareResource shares a library with a user of the
 // organization as a viewer, then as an editor, imports the grant and
-// revokes it, against the live API. MISTRAL_TEST_SHARE_USER_ID names the
-// user; without it the test is skipped.
+// revokes it, against the live API. acctest.EnvMemberUserID names the
+// user, who must not own the key.
 func TestAccLibraryShareResource(t *testing.T) {
 	acctest.PreCheck(t)
-	userID := os.Getenv("MISTRAL_TEST_SHARE_USER_ID")
-	if userID == "" {
-		t.Skip("MISTRAL_TEST_SHARE_USER_ID is not set: the library share acceptance test needs a user of the organization")
-	}
+	userID := acctest.Fixture(t, acctest.EnvMemberUserID)
 	name := acctest.RandomName("share")
 	config := func(level string) string {
 		return fmt.Sprintf(`

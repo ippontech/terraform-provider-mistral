@@ -5,7 +5,6 @@ package apikeys_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -16,19 +15,11 @@ import (
 	"github.com/ippontech/terraform-provider-mistral/internal/acctest"
 )
 
-// envKeyWorkspaceID and envKeyUserID name the workspace and the user of the
-// test organization the acceptance test creates a key for: the Admin API key
-// alone cannot tell which ones exist.
-const (
-	envKeyWorkspaceID = "MISTRAL_ACC_WORKSPACE_ID"
-	envKeyUserID      = "MISTRAL_ACC_MEMBER_USER_ID"
-)
-
 // TestAccAPIKeyResource creates an API key that expires in a year, replaces
 // it by renaming it, imports it, and deletes it, against the live API.
 func TestAccAPIKeyResource(t *testing.T) {
 	name := acctest.RandomName("key")
-	workspace, user := os.Getenv(envKeyWorkspaceID), os.Getenv(envKeyUserID)
+	workspace, user := acctest.Fixture(t, acctest.EnvWorkspaceID), acctest.Fixture(t, acctest.EnvMemberUserID)
 	config := func(keyName string) string {
 		return fmt.Sprintf(`
 resource "mistral_api_key" "this" {
@@ -45,14 +36,7 @@ resource "mistral_api_key" "this" {
 	}
 
 	resource.Test(t, resource.TestCase{
-		PreCheck: func() {
-			acctest.PreCheckAdmin(t)
-			for _, v := range []string{envKeyWorkspaceID, envKeyUserID} {
-				if os.Getenv(v) == "" {
-					t.Skipf("%s is not set: the API key acceptance test is skipped", v)
-				}
-			}
-		},
+		PreCheck:                 func() { acctest.PreCheckAdmin(t) },
 		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
