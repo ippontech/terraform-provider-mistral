@@ -1,0 +1,60 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Admin API: Users and Groups"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Invites a person to the organization by email, with the Admin API key (`admin_api_key`). The Admin API needs an Enterprise plan and access granted by Mistral. Mistral emails the invite; the person joins the organization with the roles and workspaces of the invite once they accept it.
+
+-> **Public preview at Mistral.** The Admin API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This resource is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+One resource is one invite, so `email` takes one address. The API also accepts several addresses separated by commas or new lines; the provider refuses them. When the organization signs in through SAML SSO, people join through the identity provider instead of an invite.
+
+## Changes
+
+The API cannot update an invite. Changing any argument revokes the invite and sends a new one, with a new email. Once the invite is accepted, that replacement fails, since the address belongs to a member: remove the resource from the configuration instead, and change the roles of the member in the Admin Panel.
+
+The create fails when the address already has a pending invite, and gives the `import` block that brings it under Terraform. It also fails when the address belongs to a member of the organization. An expired invite does not block the create: the new invite is a separate one.
+
+## Status
+
+`status` follows the invite at Mistral:
+
+- `pending` until the person accepts it;
+- `expired` when it expired unaccepted;
+- `accepted` once the address belongs to a member of the organization.
+
+The invite stays in the state whatever its status, so an accepted invite never plans a new one. If the member later leaves the organization, the next plan creates the invite again, and shows it: remove the resource from the configuration to stop inviting them.
+
+## Destroy
+
+Destroying a pending or expired invite revokes it. Destroying an accepted invite only removes it from the state: the member stays in the organization, with their roles and workspaces. Remove a member in the Admin Panel.
+
+## Not managed
+
+`subscription_types` (paid seats), `subscription_seat_automatic_granting` and `email_language` are not arguments of this resource. The API does not return them, so a change could not be detected, and an import could not recover them.
+
+## Example Usage
+
+{{ tffile "examples/resources/mistral_invite/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Only a pending or expired invite can be imported: Mistral no longer lists an invite once accepted. The import reads the roles back by name, through `GET /v1/admin/roles` when the API returns them as role UUIDs.
+
+In Terraform 1.12 and later, an `import` block can use the resource identity:
+
+{{ tffile "examples/resources/mistral_invite/import-by-identity.tf" }}
+
+{{ .IdentitySchemaMarkdown | trimspace }}
+
+In Terraform and OpenTofu, an `import` block can use the invite UUID:
+
+{{ tffile "examples/resources/mistral_invite/import-by-string-id.tf" }}

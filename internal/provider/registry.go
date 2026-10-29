@@ -16,7 +16,9 @@ import (
 	"github.com/ippontech/terraform-provider-mistral/internal/services/libraries"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/models"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/promptsandskills"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/roles"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/serviceaccounts"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/users"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/workspaces"
 )
 
@@ -93,6 +95,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: promptsandskills.NewPromptResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: promptsandskills.NewSkillResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: serviceaccounts.NewServiceAccountResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: users.NewInviteResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: workspaces.NewWorkspaceResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: workspaces.NewWorkspaceMemberResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 	}
@@ -105,7 +108,10 @@ func dataSourceRegistrations() []registration[datasource.DataSource] {
 		{New: libraries.NewLibraryDataSource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: models.NewModelDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
 		{New: models.NewModelsDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
+		{New: roles.NewRolesDataSource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: serviceaccounts.NewAssignableServiceAccountRolesDataSource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: users.NewUserDataSource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
+		{New: users.NewUsersDataSource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: workspaces.NewWorkspaceDataSource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: workspaces.NewWorkspacesDataSource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 	}
