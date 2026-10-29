@@ -1,0 +1,52 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Admin API: Users and Groups"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Manages a user group of the organization with the Admin API key (`admin_api_key`). A group bundles users so that they get roles together: an organization role, and roles in the workspaces the group is assigned to with `mistral_user_group_workspace`. The Admin API needs an Enterprise plan and access granted by Mistral.
+
+-> **Public preview at Mistral.** The Admin API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This resource is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+## Nested groups
+
+A group names the groups it sits inside with `parent_group_ids`. The API can also set the children of a group, but the provider does not offer it: each nesting then belongs to one resource only, the child's, and two resources never disagree about it. A child added to a group outside Terraform shows as a change of that child, if Terraform manages it.
+
+## Organization role
+
+`organization_role` is the organization role that the group gives its members: `member`, `billing_manager` or `organization_admin`. The API cannot clear it. When the argument is left out, Terraform does not manage the role, and removing the argument leaves the role as it is. To lower it, set `member`.
+
+## Groups an identity provider manages
+
+When the organization syncs users and groups from an identity provider (SSO, or SCIM provisioning, which Mistral announces as not yet generally available), the synced groups are externally managed: `externally_managed` is `true`. The identity provider is the source of truth for their identity, membership and lifecycle, and Mistral refuses changes to the fields it owns. The documentation says no more. Our reading:
+
+- Do not manage a synced group with this resource. Read it with the `mistral_user_group` data source instead, and give it access to workspaces with `mistral_user_group_workspace`.
+- The members of a synced group belong to the identity provider. A sync of memberships can remove a member that `mistral_user_group_member` added, and the next apply adds it back.
+- An on-demand SCIM sync can delete the "Organization groups that are absent from the SCIM provider". Whether that includes groups created with Terraform is not documented. If it does, the next plan creates the group again, with its members and workspace assignments.
+
+## Destroy
+
+Destroying the resource deletes the group. Its members stay in the organization and lose the roles the group gave them, unless they also hold those roles directly or through another group.
+
+## Example Usage
+
+{{ tffile "examples/resources/mistral_user_group/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+In Terraform 1.12 and later, an `import` block can use the resource identity:
+
+{{ tffile "examples/resources/mistral_user_group/import-by-identity.tf" }}
+
+{{ .IdentitySchemaMarkdown | trimspace }}
+
+In Terraform and OpenTofu, an `import` block can use the group ID:
+
+{{ tffile "examples/resources/mistral_user_group/import-by-string-id.tf" }}
