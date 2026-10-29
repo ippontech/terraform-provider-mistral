@@ -1,0 +1,76 @@
+name: Conventional Commits
+
+# The release tooling reads Conventional Commits on main to choose the next
+# version and write the release notes; a message it cannot parse silently
+# produces no release. A squash merge turns the PR title and description into
+# that commit, and a rebase merge puts every commit of the branch on main, so
+# both are checked here, by tools/conventional-commits.sh (rules there), the
+# same script as the commit-msg hook of .pre-commit-config.yaml.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  merge_group:
+
+permissions: {}
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # The checks make no network call besides the checkout.
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the check
+        run: tools/conventional-commits_test.sh
+
+      # In the merge queue the title was already checked on the pull request;
+      # the job still runs so that a required check reports there too.
+      - name: Check the PR title and description
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: tools/conventional-commits.sh title
+
+  commit-messages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+
+      # The whole history, to walk from the base to the head of the pull
+      # request.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Check every commit of the pull request
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: tools/conventional-commits.sh range "${BASE}..${HEAD}"

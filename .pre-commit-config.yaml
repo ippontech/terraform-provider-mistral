@@ -12,13 +12,15 @@ repos:
         exclude: ^docs/
       - id: trailing-whitespace
         exclude: ^docs/
-  - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.4.0
+  # The same check as the Conventional Commits workflow: one script, so the
+  # hook and CI cannot disagree.
+  - repo: local
     hooks:
-      - id: conventional-pre-commit
+      - id: conventional-commits
+        name: conventional commits
+        language: script
+        entry: tools/conventional-commits.sh message
         stages: [commit-msg]
-        # Same types as the pr-title check (.github/workflows/pr-title.yml).
-        args: [feat, fix, perf, revert, docs, style, chore, refactor, test, build, ci]
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.109.3
     hooks:
