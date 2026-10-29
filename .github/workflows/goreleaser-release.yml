@@ -8,8 +8,9 @@ name: GoReleaser Release
 # (RELEASE.md, Release security):
 #   - the GPG key and its passphrase are secrets of the protected `release`
 #     environment, not repository secrets;
-#   - no cache is restored or saved: a cache written by a pull request job
-#     could otherwise run code in the job that signs;
+#   - no cache is restored or saved: a tag run can restore the caches of
+#     main, so a cache written by any job on main could otherwise run code
+#     in the job that signs;
 #   - the checkout keeps no credential (persist-credentials: false), and the
 #     modules are verified against go.sum before the build;
 #   - tags are protected by a ruleset (RELEASE.md), so only repository
