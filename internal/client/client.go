@@ -90,6 +90,10 @@ type call struct {
 	// idempotent marks a write the API documents as idempotent (an upsert),
 	// which is retried like a read.
 	idempotent bool
+	// status, when not nil, receives the status code of a successful answer,
+	// for an endpoint whose 2xx codes mean different things (an upload
+	// answers 201 for a new document and 200 for an existing one).
+	status *int
 }
 
 // do sends c and decodes the JSON response into out, when out is not nil.
@@ -186,6 +190,9 @@ func decode(c call, resp *http.Response, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return newError(c, resp)
+	}
+	if c.status != nil {
+		*c.status = resp.StatusCode
 	}
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		_, _ = io.Copy(io.Discard, resp.Body)

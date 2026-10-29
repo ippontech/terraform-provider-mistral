@@ -1,0 +1,40 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Libraries"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Manages a library of the workspace of the standard API key (`api_key`): a knowledge base of documents that the `document_library` tool of a `mistral_agent` searches. Add its documents with `mistral_library_document`, and its access grants with `mistral_library_share`.
+
+-> **Public preview at Mistral.** The Libraries API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This resource is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+## Owner
+
+`owner_type` defaults to `Workspace`: the library is shared with the workspace of the API key. A `User` library is private to its owner, and only an API key with the "Private and shared connectors" connector access scope can create one. The API cannot change the owner: changing `owner_type` replaces the library, which deletes its documents. The `mistral_library_document` resources of the library are then replaced too, and their files uploaded again.
+
+## Documents
+
+Destroying the library deletes its documents. `nb_documents` and `total_size` are read at each refresh: documents uploaded in the same apply as the library show in the next plan, not in the state of that apply.
+
+## Example Usage
+
+{{ tffile "examples/resources/mistral_library/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+In Terraform 1.12 and later, an `import` block can use the resource identity:
+
+{{ tffile "examples/resources/mistral_library/import-by-identity.tf" }}
+
+{{ .IdentitySchemaMarkdown | trimspace }}
+
+In Terraform and OpenTofu, an `import` block can use the library ID. A library created in Vibe has its ID in its URL (`https://chat.mistral.ai/libraries/<library_id>`):
+
+{{ tffile "examples/resources/mistral_library/import-by-string-id.tf" }}
