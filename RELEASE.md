@@ -23,7 +23,7 @@ The release notes group the commits by type (`.goreleaser.yml`, `changelog`): br
 
 **The provider stays in 0.x until 1.0.0 is decided.** While in 0.x:
 
-- **Breaking changes** publish a minor version. The commit marks them with `!`, and its body says what users must change, which the release notes show.
+- **Breaking changes** publish a minor version. The commit marks them with `!`, which puts them under *Breaking changes* in the notes, and its body says what users must change; the notes show the subject only, so the subject names what breaks.
 - **Names first.** Get the resource, attribute and import ID names right before 1.0.0. After it, a rename costs a major version and a `moved` block for every user.
 - **Condition for 1.0.0.** Every published resource and data source has passed an acceptance test against the live API (its registry entry says `acceptanceTested`). This includes the Admin API ones, so it needs Enterprise access from Mistral.
 
