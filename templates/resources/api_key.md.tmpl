@@ -1,0 +1,52 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Admin API: Workspaces and API Keys"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Manages a workspace API key created for a user of the organization, with the Admin API key (`admin_api_key`). The Admin API needs an Enterprise plan and access granted by Mistral. The key acts in its workspace, with the quota, limits and resources of that workspace.
+
+-> **Public preview at Mistral.** The Admin API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This resource is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+## The secret
+
+Mistral returns the secret of a key once, when it creates the key. The provider stores it in the state, in the sensitive `key` attribute: protect the state as you protect the key. An import cannot recover the secret, so `key` is null after an import.
+
+A key created in a configuration cannot configure a `mistral` provider block of that same configuration, since a provider argument must be known at plan time. Hand it to a secret store, or to another configuration.
+
+## No update
+
+The API cannot change a key. Changing `workspace_id`, `user_id`, `name` or `expiration` replaces the key: Terraform deletes the old key, whose applications lose access, then creates a new key with a new secret. With `create_before_destroy`, the new key exists before the old one goes. Destroying the resource deletes the key at Mistral.
+
+## Expiration
+
+When an expiration policy applies to the workspace, Mistral creates a key asked without an expiration date, or with a date beyond the maximum, "with the latest expiration date allowed by the policy". `expiration` keeps the date of the configuration, and `expiration_date` gives the date Mistral set: a shortened date does not plan a replacement.
+
+An expired key stays in the state for as long as Mistral lists it. To renew it, change `expiration`, which replaces the key.
+
+The Admin Panel also sets a connector access scope on a key. The API does not take one, and the documentation does not say which scope a key created through the API gets.
+
+## Example Usage
+
+{{ tffile "examples/resources/mistral_api_key/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+The import reads the key without its secret: `key` stays null. The API does not return `user_id`, and the provider never reads `expiration` back, so both are null after an import: the first apply records the configured values in place and does not replace the key.
+
+In Terraform 1.12 and later, an `import` block can use the resource identity:
+
+{{ tffile "examples/resources/mistral_api_key/import-by-identity.tf" }}
+
+{{ .IdentitySchemaMarkdown | trimspace }}
+
+In Terraform and OpenTofu, an `import` block can use the API key ID:
+
+{{ tffile "examples/resources/mistral_api_key/import-by-string-id.tf" }}

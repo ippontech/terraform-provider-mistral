@@ -11,11 +11,13 @@ import (
 
 	"github.com/ippontech/terraform-provider-mistral/internal/providerdata"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/agents"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/connectors"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/libraries"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/models"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/promptsandskills"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/serviceaccounts"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/workspaces"
 )
 
 // registration is a resource or data source factory with what its
@@ -82,6 +84,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 	return []registration[resource.Resource]{
 		{New: agents.NewAgentResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: agents.NewAgentAliasResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: apikeys.NewAPIKeyResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: connectors.NewConnectorResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: connectors.NewConnectorCredentialResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: libraries.NewLibraryResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
@@ -90,6 +93,8 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: promptsandskills.NewPromptResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: promptsandskills.NewSkillResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: serviceaccounts.NewServiceAccountResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: workspaces.NewWorkspaceResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
+		{New: workspaces.NewWorkspaceMemberResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 	}
 }
 
@@ -101,6 +106,8 @@ func dataSourceRegistrations() []registration[datasource.DataSource] {
 		{New: models.NewModelDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
 		{New: models.NewModelsDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
 		{New: serviceaccounts.NewAssignableServiceAccountRolesDataSource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: workspaces.NewWorkspaceDataSource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
+		{New: workspaces.NewWorkspacesDataSource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 	}
 }
 
