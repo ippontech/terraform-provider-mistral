@@ -149,15 +149,19 @@ func (r *AgentAliasResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 	found, err := r.find(ctx, state.AgentID.ValueString(), state.Alias.ValueString())
-	if client.IsNotFound(err) {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-	if err != nil {
+	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Cannot read the agent alias", err.Error())
 		return
 	}
+	// A 404 means the agent is gone, and its aliases with it.
 	if found == nil {
+		// Set the identity before removing: during an import,
+		// terraform-plugin-framework v1.19.0 fails a Read that removes the
+		// resource without one, instead of Terraform's "Cannot import
+		// non-existent remote object".
+		if resp.Identity != nil {
+			resp.Diagnostics.Append(resp.Identity.Set(ctx, agentAliasIdentity{AgentID: state.AgentID, Alias: state.Alias})...)
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
