@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(make testacc*)",
+      "Bash(TF_ACC=*)"
+    ]
+  }
+}
