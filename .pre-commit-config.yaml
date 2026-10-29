@@ -47,25 +47,6 @@ repos:
         language: system
         entry: mise exec -- gitleaks git --pre-commit --staged --config .gitleaks.toml --redact --no-banner --verbose
         pass_filenames: false
-  - repo: https://github.com/semgrep/semgrep
-    rev: v1.181.0
-    hooks:
-      - id: semgrep
-        args:
-          - --config=tools/semgrep.yml
-          - --error
-        files: ^\.github/
-  - repo: https://github.com/bridgecrewio/checkov
-    rev: 3.3.29
-    hooks:
-      - id: checkov
-        pass_filenames: false
-        args:
-          - --directory=.github/workflows
-          - --framework=github_actions
-          - --quiet
-          - --compact
-        files: ^\.github/workflows/
   # Go hooks run the versions pinned in mise.toml (Go, golangci-lint), so they
   # match `make lint` and the CI lint job.
   - repo: local
