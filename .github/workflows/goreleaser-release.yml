@@ -1,8 +1,8 @@
 name: GoReleaser Release
 
-# Builds, signs and publishes a release when semantic-release pushes a
-# version tag. The Terraform Registry and the OpenTofu Registry ingest the
-# GitHub release (RELEASE.md, Publishing).
+# Builds, signs and publishes a release when a maintainer pushes a version tag
+# on a commit of main (RELEASE.md, Cutting a release). The Terraform Registry
+# and the OpenTofu Registry ingest the GitHub release.
 #
 # The job holds the signing key, so it follows the rules for privileged jobs
 # (RELEASE.md, Release security):
@@ -12,8 +12,10 @@ name: GoReleaser Release
 #     could otherwise run code in the job that signs;
 #   - the checkout keeps no credential (persist-credentials: false), and the
 #     modules are verified against go.sum before the build;
-#   - tags are protected by a ruleset (RELEASE.md), so only the release
-#     automation creates them.
+#   - tags are protected by a ruleset (RELEASE.md), so only repository
+#     admins create them, and nobody moves or deletes them;
+#   - the tagged commit must be on main, so that a release ships only what
+#     the pull request checks accepted.
 on:
   push:
     tags:
@@ -27,10 +29,8 @@ concurrency:
 
 jobs:
   goreleaser-release:
-    # v0.0.0 is the starting tag semantic-release counts from (RELEASE.md,
-    # Versions): it marks the initial commit, nothing is built for it.
     # The registries ingest public repositories only.
-    if: ${{ !github.event.repository.private && github.ref_name != 'v0.0.0' }}
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -54,8 +54,15 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # GoReleaser reads the previous tag
+          fetch-depth: 0 # the previous tag for the release notes, and main for the check below
           persist-credentials: false
+
+      - name: Check that the tag is on main
+        run: |
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error title=Release::${GITHUB_REF_NAME} points to ${GITHUB_SHA}, which is not on main: tag a commit of main."
+            exit 1
+          fi
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
