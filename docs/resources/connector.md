@@ -81,7 +81,7 @@ resource "mistral_agent" "support" {
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -99,7 +99,7 @@ import {
 
 - `id` (String) The connector ID.
 
-In Terraform and OpenTofu, an `import` block can use the connector ID:
+In earlier versions too, an `import` block can use the connector ID:
 
 ```terraform
 import {

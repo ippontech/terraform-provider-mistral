@@ -59,7 +59,7 @@ resource "mistral_library_share" "writer" {
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -81,7 +81,7 @@ import {
 - `share_with_id` (String) The ID of the user, workspace or organization.
 - `share_with_type` (String) User, Workspace or Org.
 
-In Terraform and OpenTofu, an `import` block can use `<library_id>:<share_with_type>:<share_with_id>`:
+In earlier versions too, an `import` block can use `<library_id>:<share_with_type>:<share_with_id>`:
 
 ```terraform
 import {

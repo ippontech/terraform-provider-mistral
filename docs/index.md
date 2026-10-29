@@ -78,7 +78,7 @@ variable "staging_api_key" {
 }
 ```
 
-Set the credentials with the `MISTRAL_API_KEY` and `MISTRAL_ADMIN_API_KEY` environment variables, or with ephemeral variables on Terraform 1.10 and later. A value set in the provider block from an ordinary variable, even a sensitive one, can be kept in a saved plan.
+Set the credentials with the `MISTRAL_API_KEY` and `MISTRAL_ADMIN_API_KEY` environment variables, or with ephemeral variables. A value set in the provider block from an ordinary variable, even a sensitive one, can be kept in a saved plan.
 
 A provider argument must be known at plan time: a workspace and its key created in one apply cannot configure another provider block in that same apply.
 

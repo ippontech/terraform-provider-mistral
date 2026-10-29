@@ -57,7 +57,7 @@ resource "mistral_organization_spend_limit" "this" {
 
 The import ID and the identity are always `organization`: the Admin API key selects the organization.
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -75,7 +75,7 @@ import {
 
 - `id` (String) Always `organization`.
 
-In Terraform and OpenTofu, an `import` block can use the ID:
+In earlier versions too, an `import` block can use the ID:
 
 ```terraform
 import {

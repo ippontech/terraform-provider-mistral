@@ -29,12 +29,12 @@ Destroying the library deletes its documents. `nb_documents` and `total_size` ar
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 {{ tffile "examples/resources/mistral_library/import-by-identity.tf" }}
 
 {{ .IdentitySchemaMarkdown | trimspace }}
 
-In Terraform and OpenTofu, an `import` block can use the library ID. A library created in Vibe has its ID in its URL (`https://chat.mistral.ai/libraries/<library_id>`):
+In earlier versions too, an `import` block can use the library ID. A library created in Vibe has its ID in its URL (`https://chat.mistral.ai/libraries/<library_id>`):
 
 {{ tffile "examples/resources/mistral_library/import-by-string-id.tf" }}

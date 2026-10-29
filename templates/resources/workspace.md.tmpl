@@ -44,12 +44,12 @@ A workspace renamed in the Admin Panel shows as drift, and the next apply rename
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 {{ tffile "examples/resources/mistral_workspace/import-by-identity.tf" }}
 
 {{ .IdentitySchemaMarkdown | trimspace }}
 
-In Terraform and OpenTofu, an `import` block can use the workspace ID:
+In earlier versions too, an `import` block can use the workspace ID:
 
 {{ tffile "examples/resources/mistral_workspace/import-by-string-id.tf" }}

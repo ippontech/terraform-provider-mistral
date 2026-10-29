@@ -41,12 +41,12 @@ The API has no delete. Destroying the resource leaves the limit at Mistral as it
 
 The import ID and the identity are always `organization`: the Admin API key selects the organization.
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 {{ tffile "examples/resources/mistral_organization_spend_limit/import-by-identity.tf" }}
 
 {{ .IdentitySchemaMarkdown | trimspace }}
 
-In Terraform and OpenTofu, an `import` block can use the ID:
+In earlier versions too, an `import` block can use the ID:
 
 {{ tffile "examples/resources/mistral_organization_spend_limit/import-by-string-id.tf" }}

@@ -37,12 +37,12 @@ When an argument is left out, the provider sends what the API would fill in: no 
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 {{ tffile "examples/resources/mistral_agent/import-by-identity.tf" }}
 
 {{ .IdentitySchemaMarkdown | trimspace }}
 
-In Terraform and OpenTofu, an `import` block can use the agent ID:
+In earlier versions too, an `import` block can use the agent ID:
 
 {{ tffile "examples/resources/mistral_agent/import-by-string-id.tf" }}

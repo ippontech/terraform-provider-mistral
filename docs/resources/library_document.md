@@ -97,7 +97,7 @@ Optional:
 
 The API does not return the file. After an import, `source` and `source_hash` are null in the state, and the next apply records them in place, without an upload. From then on, a new file replaces the document.
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -117,7 +117,7 @@ import {
 - `document_id` (String) The document ID.
 - `library_id` (String) The library ID.
 
-In Terraform and OpenTofu, an `import` block can use `<library_id>:<document_id>`:
+In earlier versions too, an `import` block can use `<library_id>:<document_id>`:
 
 ```terraform
 import {

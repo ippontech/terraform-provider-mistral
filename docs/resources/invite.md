@@ -83,7 +83,7 @@ output "grace_invite_status" {
 
 Only a pending or expired invite can be imported: Mistral no longer lists an invite once accepted. The import reads the roles back by name, through `GET /v1/admin/roles` when the API returns them as role UUIDs.
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -101,7 +101,7 @@ import {
 
 - `id` (String) The invite UUID.
 
-In Terraform and OpenTofu, an `import` block can use the invite UUID:
+In earlier versions too, an `import` block can use the invite UUID:
 
 ```terraform
 import {

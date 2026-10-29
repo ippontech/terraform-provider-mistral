@@ -15,7 +15,7 @@ Manages a named set of credentials of a connector, with the standard API key (`a
 
 ## Secrets
 
-`credentials_wo` is a write-only argument: Terraform sends it to the API and never stores it in the plan or the state, and the API never returns it. It needs Terraform 1.11 or later, and accepts an ephemeral value. Write it with `jsonencode`, with one of these fields:
+`credentials_wo` is a write-only argument: Terraform sends it to the API and never stores it in the plan or the state, and the API never returns it. It needs Terraform or OpenTofu 1.11 or later, and accepts an ephemeral value. Write it with `jsonencode`, with one of these fields:
 
 - `bearer_token`: a token for a connector that authenticates with a bearer token;
 - `headers`: an object of header names and values. `jsonencode({ headers = {} })` connects a server that needs no credentials, as the Mistral guide does;
@@ -93,7 +93,7 @@ resource "mistral_connector_credential" "orders" {
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -115,7 +115,7 @@ import {
 - `name` (String) The name of the credentials.
 - `scope` (String) The consumer scope: `workspace` or `organization`.
 
-In Terraform and OpenTofu, an `import` block can use `<connector_id>:<scope>:<name>`:
+In earlier versions too, an `import` block can use `<connector_id>:<scope>:<name>`:
 
 ```terraform
 import {

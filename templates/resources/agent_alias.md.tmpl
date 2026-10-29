@@ -25,12 +25,12 @@ The version must exist: a `version` the agent does not have fails the apply. Des
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 {{ tffile "examples/resources/mistral_agent_alias/import-by-identity.tf" }}
 
 {{ .IdentitySchemaMarkdown | trimspace }}
 
-In Terraform and OpenTofu, an `import` block can use `<agent_id>:<alias>`:
+In earlier versions too, an `import` block can use `<agent_id>:<alias>`:
 
 {{ tffile "examples/resources/mistral_agent_alias/import-by-string-id.tf" }}

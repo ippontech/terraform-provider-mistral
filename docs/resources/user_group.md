@@ -70,7 +70,7 @@ resource "mistral_user_group" "interns" {
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -88,7 +88,7 @@ import {
 
 - `id` (String) The user group ID.
 
-In Terraform and OpenTofu, an `import` block can use the group ID:
+In earlier versions too, an `import` block can use the group ID:
 
 ```terraform
 import {

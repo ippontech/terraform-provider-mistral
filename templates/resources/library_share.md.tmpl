@@ -27,12 +27,12 @@ The API creates a grant and changes its level with the same call. To avoid takin
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 {{ tffile "examples/resources/mistral_library_share/import-by-identity.tf" }}
 
 {{ .IdentitySchemaMarkdown | trimspace }}
 
-In Terraform and OpenTofu, an `import` block can use `<library_id>:<share_with_type>:<share_with_id>`:
+In earlier versions too, an `import` block can use `<library_id>:<share_with_type>:<share_with_id>`:
 
 {{ tffile "examples/resources/mistral_library_share/import-by-string-id.tf" }}

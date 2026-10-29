@@ -83,7 +83,7 @@ output "backend_key_expires_on" {
 
 The import reads the key without its secret: `key` stays null. The API does not return `user_id`, and the provider never reads `expiration` back, so both are null after an import: the first apply records the configured values in place and does not replace the key.
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -101,7 +101,7 @@ import {
 
 - `id` (String) The API key ID.
 
-In Terraform and OpenTofu, an `import` block can use the API key ID:
+In earlier versions too, an `import` block can use the API key ID:
 
 ```terraform
 import {

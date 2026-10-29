@@ -62,7 +62,7 @@ resource "mistral_agent" "support" {
 
 ## Import
 
-In Terraform 1.12 and later, an `import` block can use the resource identity:
+In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
 ```terraform
 import {
@@ -80,7 +80,7 @@ import {
 
 - `id` (String) The library ID.
 
-In Terraform and OpenTofu, an `import` block can use the library ID. A library created in Vibe has its ID in its URL (`https://chat.mistral.ai/libraries/<library_id>`):
+In earlier versions too, an `import` block can use the library ID. A library created in Vibe has its ID in its URL (`https://chat.mistral.ai/libraries/<library_id>`):
 
 ```terraform
 import {
