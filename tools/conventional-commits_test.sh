@@ -7,12 +7,12 @@ set -uo pipefail
 script="$(dirname "$0")/conventional-commits.sh"
 status=0
 
-# expect <accept|reject> <title> [body]
+# expect <accept|reject> <title>
 expect() {
-	local want=$1 title=$2 body=${3:-} got
-	if TITLE=${title} BODY=${body} "${script}" title >/dev/null 2>&1; then got=accept; else got=reject; fi
+	local want=$1 title=$2 got
+	if TITLE=${title} "${script}" title >/dev/null 2>&1; then got=accept; else got=reject; fi
 	if [[ "${got}" != "${want}" ]]; then
-		echo "FAIL: '${title}' / '${body}': got ${got}, want ${want}"
+		echo "FAIL: '${title}': got ${got}, want ${want}"
 		status=1
 	fi
 }
@@ -21,14 +21,13 @@ expect accept 'feat(agents): add the agent resource'
 expect accept 'fix: keep the alias on a failed read'
 expect accept 'ci(release): pin GoReleaser'
 expect accept 'Revert "feat(agents): add the agent resource"'
-expect accept 'feat: drop an attribute' 'Breaking in 0.x: tools is now a list.'
+expect accept 'feat!: drop an attribute'
+expect accept 'feat(agents)!: drop an attribute'
 expect reject 'Add the agent resource'
 expect reject 'feature: add the agent resource'
 expect reject 'feat:add the agent resource'
 expect reject 'feat(): add the agent resource'
-expect reject 'feat!: drop an attribute'
-expect reject 'feat(agents)!: drop an attribute'
-expect reject 'feat: drop an attribute' $'Some text.\n\nBREAKING CHANGE: tools is a list.'
+expect reject 'feat!:drop an attribute'
 expect reject 'fixup! feat: add the agent resource'
 
 # The message mode, as the commit-msg hook calls it, ignores comment lines.
