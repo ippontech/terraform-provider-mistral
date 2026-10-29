@@ -42,6 +42,7 @@ A later resource would manage roles and seats only (`PATCH /v1/admin/users/{user
 - That an accepted invite leaves both lists, and what `DELETE` answers for it.
 - Whether a second invite to an address with an expired one creates a new invite or refreshes the old one (`findCreatedInvite` handles both).
 - The answer of the create for an address that already has a pending invite.
+- Whether the create accepts an empty `workspace_uuids`, and whether the list answers `[]` for an invite to no workspace, as we read it: the provider refuses an empty `workspace_ids` and reads `[]` as null (root `CLAUDE.md`, *Empty collections*).
 
 ## Tests
 

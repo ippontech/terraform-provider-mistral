@@ -78,6 +78,7 @@ The code is read more often than it is written, by people and by agents that hav
 - **Secrets.** A secret the user supplies is write-only (`<name>_wo` and `<name>_wo_version`). A secret the API returns once (an API key) is a computed, sensitive attribute: say on the page that the state holds it and that import cannot recover it.
 - **Requires replace.** An attribute the API cannot update forces a replacement (`stringplanmodifier.RequiresReplace`). When a replacement would lose data a user cares about (a workspace), document it on the page.
 - **Dates** are RFC 3339 strings.
+- **Empty collections.** An optional list, set or map refuses `[]` and `{}` (`SizeAtLeast(1)`) and reads an empty answer as null, so that the state never swings between `[]` and null. Whether to accept `[]` and keep it in the state instead, as PR #413 of ippontech/terraform-provider-anthropic (open) does, depends on what Mistral accepts and answers: each area's *To check on the first live run* lists its attributes, and the choice is made then. Accepting `[]` later breaks no configuration. A minimum the API itself requires, such as the roles of a member or an invite, is not this rule.
 
 ## Testing
 

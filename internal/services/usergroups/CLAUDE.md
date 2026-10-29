@@ -39,6 +39,7 @@
 - The 404 body of a missing group, and whether the member and workspace lists of a deleted group answer 404 (the fake does).
 - Whether a member `DELETE` for a user not in the group answers 204 or 404 (both are accepted).
 - Whether a SCIM sync with `delete_missing_groups` deletes groups created through the API.
+- Whether a `GET` gives a top-level group `parent_group_ids: []`, null or nothing: the provider refuses an empty `parent_group_ids`, sends `[]` to remove every parent, and reads all three as null (root `CLAUDE.md`, *Empty collections*).
 
 ## Tests
 

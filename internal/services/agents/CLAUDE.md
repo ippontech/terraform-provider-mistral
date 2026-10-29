@@ -27,6 +27,7 @@
 - That the response echoes `tool_choice: "auto"` and a function's defaults, or leaves them out: the mapping accepts both.
 - The 404 body of a missing agent, alias or version.
 - Whether deleting an agent deletes its aliases (the fake answers 404 on the aliases of a deleted agent).
+- Whether the API accepts an empty `handoffs`, `stop`, `metadata` or `library_ids`, and whether it answers `[]`, `{}`, null or nothing for them: the provider refuses them and reads an empty answer as null (root `CLAUDE.md`, *Empty collections*).
 
 ## Tests
 

@@ -35,6 +35,7 @@
 - What `deduplicated` compares with: the latest version or every version. `TestAccPromptResource` never sends a definition twice; send an earlier one by hand.
 - Whether a new version keeps the aliases of the previous one or leaves them on it.
 - Whether the API returns `textContent` and `rawContent` as sent, in which base64 alphabet, and whether it derives `variables` from the template when they are left out.
+- Whether an answer gives empty `variables` and `assets` as `[]` and `{}` or leaves them out: the provider sends them empty when the configuration has none, refuses them empty in the configuration, and reads both answers as null (root `CLAUDE.md`, *Empty collections*).
 
 ## Tests
 

@@ -33,6 +33,7 @@
 - Whether the answer of `PATCH` returns the attributes as sent, with no attribute of its own, and `expires_at` at the same instant: either difference fails an apply with "inconsistent result".
 - Whether a document past its `expires_at` answers 404 at once, and whether a re-upload of its content answers 200 with it.
 - The case of `share_with_type` and `role` in the list of grants, and whether the owner appears in it.
+- Whether the `PATCH` of a document accepts `attributes: {}` as well as null to clear them, and how an answer gives a document without attributes: the provider refuses `{}` in the configuration and reads an empty answer as null (root `CLAUDE.md`, *Empty collections*).
 - The 404 bodies of a missing library, document or grant, and the answer to a library ID that is not a UUID (probably 422).
 - `TestAccLibraryShareResource` needs `MISTRAL_ACC_MEMBER_USER_ID` (`acctest.EnvMemberUserID`), a user of the organization other than the owner of the key.
 
