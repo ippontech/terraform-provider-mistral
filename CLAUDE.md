@@ -116,7 +116,7 @@ Everything else is a canned response set up by the test that needs it. A fake en
 
 **Native tests**: a `tests/<name>.tftest.hcl` with `mock_provider` runs offline on every pull request and must never need a credential; a test file without `mock_provider` calls the live API and runs in the acceptance workflow only. Never mix the two in one file.
 
-**Coverage gate**: 75 % of the statements a pull request changes, the total no more than 0.5 point under `.coverage-baseline` (update it when the job summary says so), 80 % in total and in every package. The exclusions are the test helpers, `main.go` and `tools/`. Code that cannot be tested is a reason to restructure it, not to exclude it.
+**Coverage gate** (`.coverage.json`): 75 % of the statements a pull request changes, 80 % in total and 80 % in every package, three fixed thresholds with no ratchet. The exclusions are the test helpers, `main.go` and `tools/`. Code that cannot be tested is a reason to restructure it, not to exclude it; the returns after `req.Plan.Get` and `req.State.Get` are the accepted exception.
 
 ## Commands
 
