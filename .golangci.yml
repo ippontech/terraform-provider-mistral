@@ -1,0 +1,94 @@
+# golangci-lint v2 configuration. Run it with `make lint` (the version CI uses
+# is pinned in .github/workflows/provider.yml, the local one in mise.toml).
+#
+# The whole tree is linted, the tools module included (`make lint` and the CI
+# lint job also run golangci-lint in tools/ with `--config ../.golangci.yml`):
+# `golangci-lint run` reports 0 issues, and a finding fails a pull request
+# wherever it is. When code is right as it is (a gosec finding by design, a
+# signature an interface imposes), silence the one finding on its line with
+# `//nolint:<linter> // <reason>`; add no file-wide or configuration-wide
+# exclusion.
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - gocognit
+    - godot
+    - gosec
+    - importas
+    - intrange
+    - misspell
+    - modernize
+    - nilerr
+    - nolintlint
+    - thelper
+    - unconvert
+    - unparam
+    - usestdlibvars
+  settings:
+    gocognit:
+      # Cognitive complexity of at most 20 for production code, from the first
+      # commit. Tests and the test-helper packages are left out (exclusions
+      # below): table-driven tests read better long. 20 rather than Sonar's 15:
+      # in Terraform conversion code each optional attribute adds about 2
+      # points, and 15 would push to split for the metric.
+      min-complexity: 20
+    exhaustive:
+      default-signifies-exhaustive: true
+    depguard:
+      rules:
+        # Test helpers must never be compiled into the provider binary.
+        test-helpers-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/ippontech/terraform-provider-mistral/internal/acctest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-mistral/internal/providertest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-mistral/internal/sdktest
+              desc: test helper, import it from _test.go files only
+            - pkg: net/http/httptest
+              desc: test-only package, import it from _test.go files only
+        # internal/acctest and internal/providertest import internal/provider,
+        # which imports every service: a service importing the provider
+        # package would create an import cycle in its tests.
+        services-do-not-import-provider:
+          files:
+            - "**/internal/services/**"
+          deny:
+            - pkg: github.com/ippontech/terraform-provider-mistral/internal/provider$
+              desc: import cycle with internal/acctest and internal/providertest
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errchkjson
+          - gocognit
+          - gosec
+      # These packages are test helpers themselves: they may import httptest,
+      # and, being test code, they are out of the complexity cap.
+      - path: internal/(acctest|providertest|sdktest)/
+        linters:
+          - depguard
+          - gocognit
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ippontech/terraform-provider-mistral

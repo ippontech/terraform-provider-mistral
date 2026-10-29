@@ -1,0 +1,54 @@
+# `pre-commit install` installs both hook types: the hooks below run at the
+# pre-commit stage, and the commit-msg hook checks the Conventional Commits
+# format that semantic-release reads (CONTRIBUTING.md, Conventional Commits).
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: ^docs/
+      - id: trailing-whitespace
+        exclude: ^docs/
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        # Same types as the pr-title check (.github/workflows/pr-title.yml).
+        args: [feat, fix, perf, revert, docs, style, chore, refactor, test, build, ci]
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.109.3
+    hooks:
+      - id: terraform_fmt
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+  # Go hooks run the versions pinned in mise.toml (Go, golangci-lint), so they
+  # match `make lint` and the CI lint job.
+  - repo: local
+    hooks:
+      # gofmt + goimports as configured in .golangci.yml, on the staged files.
+      - id: golangci-lint-fmt
+        name: golangci-lint fmt
+        language: system
+        entry: mise exec -- golangci-lint fmt
+        types: [go]
+      # Lints the whole tree, the tools module included, as the CI lint job
+      # does (make lint).
+      - id: golangci-lint
+        name: golangci-lint run
+        language: system
+        entry: mise exec -- make lint
+        types: [go]
+        pass_filenames: false
+        require_serial: true
+      - id: go-mod-tidy
+        name: go mod tidy -diff
+        language: system
+        entry: mise exec -- make tidy-check
+        files: ^(tools/)?go\.(mod|sum)$|\.go$
+        pass_filenames: false

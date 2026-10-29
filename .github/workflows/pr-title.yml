@@ -1,0 +1,65 @@
+name: PR Title
+
+# A squash merge takes the PR title as its commit message, which
+# semantic-release then reads to choose the next version and write the release
+# notes (.releaserc); a rebase merge keeps the commits, whose messages the
+# commit-msg hook checks the same way. A title it cannot parse silently
+# produces no release.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  merge_group:
+
+permissions: {}
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # The check makes no network call.
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ''
+
+      # In the merge queue the title was already checked on the pull request;
+      # the job still runs so that a required check reports there too.
+      - name: Check the PR title
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # The types semantic-release acts on or knows (.releaserc and the
+          # commit-analyzer default rules, table in CONTRIBUTING.md). `feature`,
+          # an alias in the conventionalcommits preset, is left out: no release
+          # rule matches it, so it would silently publish nothing.
+          types='feat|fix|perf|revert|docs|style|chore|refactor|test|build|ci'
+          pattern="^(${types})(\([^()]+\))?(!)?: [^[:space:]]"
+          if [[ "${TITLE}" =~ ^Revert\ \".+\"$ ]]; then
+            # GitHub's revert button titles the PR 'Revert "<original title>"',
+            # which semantic-release reads as a revert.
+            echo "PR title is a GitHub revert."
+          elif [[ ! "${TITLE}" =~ ${pattern} ]]; then
+            echo "::error title=PR title::Expected '<type>[(scope)][!]: <subject>' with type one of ${types//|/, } (Conventional Commits, see CONTRIBUTING.md)."
+            exit 1
+          elif [[ -n "${BASH_REMATCH[3]}" && "${BASE_REF}" == "main" ]]; then
+            # feat! / fix! on main would publish 1.0.0, or the next major.
+            # While the provider is in 0.x, a breaking change is a feat with a
+            # "Breaking in 0.x" note in the description (RELEASE.md, Versions).
+            echo "::error title=PR title::'!' marks a breaking change and would publish a major release: in 0.x, use feat and describe the break in the description (see RELEASE.md, section Versions)."
+            exit 1
+          fi
+          # The PR description becomes the squash commit body, where a
+          # BREAKING CHANGE footer would publish a major release just the same.
+          if [[ "${BASE_REF}" == "main" ]] && grep -qE '^BREAKING[ -]CHANGE:' <<< "${BODY}"; then
+            echo "::error title=PR description::A 'BREAKING CHANGE:' footer would publish a major release: in 0.x, write 'Breaking in 0.x:' instead (see RELEASE.md, section Versions)."
+            exit 1
+          fi
+          echo "PR title follows Conventional Commits."

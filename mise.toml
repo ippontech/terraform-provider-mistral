@@ -1,0 +1,8 @@
+# Local tool versions. CI pins the same ones in .github/workflows/.
+[tools]
+go = "1.27.3"
+golangci-lint = "2.15.0"
+goreleaser = "2.19.0"
+terraform = "1.17.1"
+gitleaks = "8.30.1"
+"github:boostsecurityio/poutine" = "1.1.6"
