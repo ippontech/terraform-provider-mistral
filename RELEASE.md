@@ -53,8 +53,7 @@ These steps need an owner of the GitHub organization and of the registry namespa
 5. **Create the `spec-drift` label**, which `spec-drift.yml` puts on the issue it opens.
 6. **Publish on the Terraform Registry.** Sign in to https://registry.terraform.io with GitHub, choose *Publish > Provider*, then the `ippontech` organization and `terraform-provider-mistral`. The `ippontech` namespace already has a signing key (the one used for `ippontech/anthropic`). The Registry requires RSA or DSA keys, and rejects the default ECC type. The Registry installs a webhook and ingests every later release by itself.
 7. **Publish on the OpenTofu Registry.** Open a *Submit new Provider* issue at https://github.com/opentofu/registry/issues/new/choose for `ippontech/terraform-provider-mistral`. Do not open a pull request or use the API: the registry only accepts the issue forms.
-   - As of 2026-10-29, OpenTofu has no signing key for the `ippontech` namespace (`ippontech/anthropic` is listed without one).
-   - A public member of the organization can add one with the *Submit new Provider Signing Key* form. OpenTofu checks the key's expiry at submission; the Terraform Registry does not.
+   - **Signing key.** As of 2026-10-29, OpenTofu has no signing key for the `ippontech` namespace, and installs the provider without checking its signature. The `RELEASE.md` of `ippontech/terraform-provider-anthropic` (*Register the public key in the OpenTofu Registry*, ippontech/terraform-provider-anthropic#491) submits the namespace key with no provider name, which covers every provider of `ippontech`, this one included: nothing to submit here once it is done. OpenTofu checks the key's expiry at submission; the Terraform Registry does not.
 
 ## Checking a release
 
