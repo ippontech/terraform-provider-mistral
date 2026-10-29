@@ -7,21 +7,23 @@
 // The summary is the total, then one row per file matching -match (by default
 // every resource and data source file), least covered first.
 //
-// The gate (gate.go) reads its thresholds and exclusions from .coverage.json
-// and the committed baseline from .coverage-baseline. It has four rules:
+// The gate (gate.go) reads its thresholds and exclusions from .coverage.json.
+// It has three rules, each against a fixed threshold:
 //
 //   - diff: at least diff_min % of the executable statements a change touches
 //     (non-test Go files, outside the exclusions) are covered; it needs the
 //     output of `git diff --unified=0 <base>...HEAD` (-diff);
-//   - ratchet: the total stays at or above the baseline minus
-//     ratchet_tolerance;
-//   - floor: once the baseline reaches total_target, the total may never drop
-//     below total_target, and the baseline may not be lowered under it
-//     (-base-baseline gives the base branch's baseline);
+//   - total: the total outside the exclusions is at total_target % or more;
 //   - packages: every package outside the exclusions is at package_min % or
 //     more. While package_min is null, the rule is not enforced: the summary
 //     still lists every package with its distance to total_target, least
 //     covered first.
+//
+// No rule compares the total with a previous one. Near full coverage, such a
+// ratchet failed changes on statements no test can reach (the framework's
+// defensive returns), and pushed authors to write tests for the number; the
+// diff rule already refuses untested new code, and the packages rule catches
+// a real drop.
 //
 // It prints the summary on stdout and exits 1 when a rule fails, 2 on a usage
 // or input error.
@@ -46,22 +48,22 @@ import (
 // which.
 var errGateFailed = errors.New("coverage gate failed")
 
+// options are the flags of the command, as run reads them.
 type options struct {
-	match        *regexp.Regexp
-	trim         string
-	configPath   string
-	diffPath     string
-	baseBaseline string
+	match      *regexp.Regexp
+	trim       string
+	configPath string
+	diffPath   string
 }
 
+// main parses the flags, calls run and turns its error into the exit status.
 func main() {
 	match := flag.String("match", `_(resource|data_source)\.go$`, "regular expression selecting the files listed one by one")
 	trim := flag.String("trim", "github.com/ippontech/terraform-provider-mistral/", "module path prefix removed from the file paths of the profile")
 	configPath := flag.String("config", "", "coverage gate configuration (.coverage.json); without it, only the summary is printed")
 	diffPath := flag.String("diff", "", "output of git diff --unified=0 <base>...HEAD for the diff rule, - for stdin")
-	baseBaseline := flag.String("base-baseline", "", "the base branch's .coverage-baseline, for the floor rule (a missing file is skipped)")
 	flag.Usage = func() {
-		_, _ = fmt.Fprintln(flag.CommandLine.Output(), "usage: coversummary [-match regexp] [-trim prefix] [-config .coverage.json [-diff file] [-base-baseline file]] coverage.out")
+		_, _ = fmt.Fprintln(flag.CommandLine.Output(), "usage: coversummary [-match regexp] [-trim prefix] [-config .coverage.json [-diff file]] coverage.out")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -74,7 +76,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "coversummary: invalid -match: %v\n", err)
 		os.Exit(2)
 	}
-	opts := options{match: re, trim: *trim, configPath: *configPath, diffPath: *diffPath, baseBaseline: *baseBaseline}
+	opts := options{match: re, trim: *trim, configPath: *configPath, diffPath: *diffPath}
 	switch err := run(os.Stdout, os.Stdin, flag.Arg(0), opts); {
 	case errors.Is(err, errGateFailed):
 		fmt.Fprintf(os.Stderr, "coversummary: %v (details in the summary)\n", err)
@@ -85,6 +87,10 @@ func main() {
 	}
 }
 
+// run reads the profile at profilePath and writes the summary to w. With a
+// configuration, it applies the gate first, reading the diff from stdin when
+// diffPath is "-", writes the gate's report before the summary, and returns
+// errGateFailed when a rule fails.
 func run(w io.Writer, stdin io.Reader, profilePath string, opts options) error {
 	f, err := os.Open(filepath.Clean(profilePath))
 	if err != nil {
@@ -104,14 +110,6 @@ func run(w io.Writer, stdin io.Reader, profilePath string, opts options) error {
 		return err
 	}
 	in := gateInput{config: cfg}
-	if in.baseline, err = readBaseline(cfg.baselinePath); err != nil {
-		return err
-	}
-	if opts.baseBaseline != "" {
-		if in.baseBaseline, err = readOptionalBaseline(opts.baseBaseline); err != nil {
-			return err
-		}
-	}
 	if opts.diffPath != "" {
 		r := stdin
 		if opts.diffPath != "-" {

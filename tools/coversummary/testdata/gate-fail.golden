@@ -4,16 +4,11 @@
 
 | Rule | Measured | Required | Result |
 |---|---|---|---|
-| Diff: covered share of the statements the change touches | 75.0% (9 of 12) | at least 75% | pass |
-| Ratchet: total outside the exclusions | 66.67% (12 of 18) | at least 63.50% (baseline 64.00 minus 0.5) | pass |
-| Floor: the baseline never goes back under 65% once reached | 64.00 (base branch: 65.00) | not under 65 once the base reached it | **FAIL** |
+| Diff: covered share of the statements the change touches | 75.0% (9 of 12) | at least 80% | **FAIL** |
+| Total: coverage outside the exclusions | 66.67% (12 of 18) | at least 70% | **FAIL** |
 | Packages: coverage of each package | lowest 66.7% (`internal/a`); 1 of 1 under 70% | at least 70% per package | **FAIL** |
 
-The target is 65%: the baseline is 1.00 points away. Once the baseline reaches it, the total may never drop below 65%.
-
-This change raises the total to 66.67% (12 of 18), above the baseline 64.00%: set `baseline` to `66.66` (the total, truncated) in this pull request to lock the gain in.
-
-`baseline` was lowered under 65% after the base branch reached it; restore it.
+The total is under the 70% of `total_target`: add tests, starting with the least covered packages and files, which the tables below list first.
 
 ### Statements the change touches
 
