@@ -1,0 +1,38 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Build, coverage and test output
+/terraform-provider-mistral
+dist/
+coverage.out
+coverage-diff.out
+*.test
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+.dev.tfrc
+
+# Per-worktree Go build cache and GOBIN used by parallel agents
+.gocache/
+.gobin/
+
+# Node (semantic-release tooling; tools/release/package-lock.json is committed)
+node_modules/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Claude Code
+.mcp.json
+.claude/settings.local.json
+.claude/worktrees/
