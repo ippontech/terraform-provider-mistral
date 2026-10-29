@@ -32,6 +32,7 @@
           { "context": "coverage" },
           { "context": "terraform-checks" },
           { "context": "pr-title" },
+          { "context": "commit-messages" },
           { "context": "gitleaks" },
           { "context": "govulncheck" },
           { "context": "actionlint" },
