@@ -11,11 +11,11 @@ Nothing is released while the repository is private: both release workflows skip
 | `feat` | minor |
 | `fix`, `perf`, `build`, `refactor`, `docs` | patch |
 | `chore`, `ci`, `test`, `style` | none |
-| `!` or a `BREAKING CHANGE:` footer | major (refused on `main` by the PR title check) |
+| `!` or a `BREAKING CHANGE:` footer | major (refused by the Conventional Commits check) |
 
 **The provider stays in 0.x until 1.0.0 is decided.** While in 0.x:
 
-- **Breaking changes.** A breaking change is a `feat`, so it publishes a minor version. Its description starts with `Breaking in 0.x:` and says what users must change. The PR title check refuses `!` and `BREAKING CHANGE:` on `main`, because semantic-release would publish 1.0.0.
+- **Breaking changes.** A breaking change is a `feat`, so it publishes a minor version. Its description starts with `Breaking in 0.x:` and says what users must change. The Conventional Commits check (`tools/conventional-commits.sh`) refuses `!` and `BREAKING CHANGE:` in the PR title, the description and every commit, because semantic-release would publish 1.0.0.
 - **Names first.** Get the resource, attribute and import ID names right before 1.0.0. After it, a rename costs a major version and a `moved` block for every user.
 - **Condition for 1.0.0.** Every published resource and data source has passed an acceptance test against the live API (its registry entry says `acceptanceTested`). This includes the Admin API ones, so it needs Enterprise access from Mistral.
 
