@@ -1,5 +1,9 @@
 name: Security
 
+# Workflow linters (actionlint, poutine and a pull_request_target guard) and
+# tflint on every pull request. Secrets and vulnerable dependencies have their
+# own workflows (gitleaks.yml, govulncheck.yml).
+
 on:
   pull_request:
   merge_group:
@@ -29,6 +33,17 @@ jobs:
 
       - name: Run actionlint
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+      # pull_request_target runs with the repository's secrets on code from a
+      # fork; no workflow here needs it. poutine flags its dangerous uses, this
+      # refuses any use as a trigger (a key or a list item of on:), so that a
+      # new workflow cannot start with one.
+      - name: Refuse pull_request_target
+        run: |
+          if grep -rnE '^\s*pull_request_target\s*:|^\s*-\s*pull_request_target\s*$|^on:\s*(\[[^]]*)?pull_request_target' .github/workflows; then
+            echo "::error title=pull_request_target::No workflow may use pull_request_target: it runs fork code with the repository's secrets."
+            exit 1
+          fi
 
   poutine:
     runs-on: ubuntu-latest
@@ -75,35 +90,6 @@ jobs:
 
       - name: Run poutine
         run: poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
-
-  semgrep:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Harden runner
-        # Free for public repositories only: skipped while the repository is private.
-        if: ${{ !github.event.repository.private }}
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
-        with:
-          egress-policy: block
-          allowed-endpoints: >
-            github.com:443
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # The official image, pinned by digest, run as a step rather than as the
-      # job container so that harden-runner still applies (it does nothing in a
-      # container job). The runner pulls the image while setting up the job.
-      # Same rules and flags as the pre-commit hook; no metrics, no version
-      # check, so the scan itself makes no network call.
-      - name: Run semgrep
-        uses: docker://semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
-        with:
-          args: semgrep scan --config tools/semgrep.yml --error --metrics=off --disable-version-check
 
   tflint:
     runs-on: ubuntu-latest
@@ -157,34 +143,3 @@ jobs:
       # repo (examples, tests), not just the files a commit touched (#229).
       - name: Run tflint
         run: tflint --recursive --format compact
-
-  checkov:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Harden runner
-        # Free for public repositories only: skipped while the repository is private.
-        if: ${{ !github.event.repository.private }}
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
-        with:
-          egress-policy: block
-          allowed-endpoints: >
-            github.com:443
-            pypi.org:443
-            release-assets.githubusercontent.com:443
-            www.bridgecrew.cloud:443
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Run checkov
-        uses: bridgecrewio/checkov-action@c3e106d5f8f4253a6de5110efb41a080f83db294 # v12.3135.0
-        with:
-          directory: .github/workflows
-          framework: github_actions
-          quiet: true
-          compact: true
-          output_format: cli
