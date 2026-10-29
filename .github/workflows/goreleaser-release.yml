@@ -29,7 +29,65 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Runs before the approval that releases the GPG key, with no secret: it
+  # writes on the run's summary page the go.mod lines that changed since the
+  # previous release tag, which the approver checks (RELEASE.md, Approving a
+  # release). go.mod lists every module compiled into the provider.
+  dependency-changes:
+    # The registries ingest public repositories only.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the previous release tag and its go.mod
+          persist-credentials: false
+
+      - name: List the go.mod changes since the previous release
+        run: |
+          set -euo pipefail
+          {
+            if previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "${GITHUB_SHA}^" 2>/dev/null); then
+              changes=$(git diff --unified=0 "${previous}" "${GITHUB_SHA}" -- go.mod | grep -E '^[-+][^-+]' || true)
+              echo "## go.mod changes from ${previous} to ${GITHUB_REF_NAME}"
+              echo
+              if [ -z "${changes}" ]; then
+                echo "None: this release compiles the same modules as ${previous}."
+              else
+                echo "Check each change before approving the release job (RELEASE.md, *Approving a release*)."
+                echo
+                echo '```diff'
+                echo "${changes}"
+                echo '```'
+              fi
+              echo
+              echo "Full diff: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${previous}...${GITHUB_REF_NAME}"
+            else
+              echo "## Modules of ${GITHUB_REF_NAME}, the first release"
+              echo
+              echo "No previous release tag: every module of go.mod ships for the first time."
+              echo
+              echo '```'
+              awk '/^require \(/ { inside = 1; next } inside && /^\)/ { inside = 0 } inside || /^(go|toolchain|require) [^(]/' go.mod
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   goreleaser-release:
+    needs: dependency-changes
     # The registries ingest public repositories only.
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest

@@ -8,9 +8,17 @@ Nothing is released while the repository is private: the release job skips, sinc
 
 1. Read the commits since the last tag (`git log --oneline <last-tag>..origin/main`) and choose the version from their types (*Versions* below).
 2. Tag the commit of `main` and push the tag: `git tag -a v0.4.0 -m v0.4.0 <sha> && git push origin v0.4.0`. The tag ruleset lets repository admins only create a version tag, and nobody move or delete one.
-3. Approve the `release` environment if it requires a reviewer, then check the GitHub release: its archives, `SHA256SUMS`, the signature and the notes.
+3. Approve the release job (*Approving a release* below), then check the GitHub release: its archives, `SHA256SUMS`, the signature and the notes.
 
 The release notes group the commits by type (`.goreleaser.yml`, `changelog`): breaking changes (`!` after the type), features, fixes, performance, then the rest; `chore`, `ci`, `test` and `style` are left out. Every pull request checks the format (`conventional-commits.yml`), so a commit cannot land outside these groups.
+
+## Approving a release
+
+The release job waits in `Actions > GoReleaser Release`, on the run of the new tag, behind **Review deployments**, for a reviewer of the `release` environment. The approval releases the GPG key, so it is the last human check before the modules of the release ship signed to every user. Before approving:
+
+1. Open the run's summary. The `dependency-changes` job lists the `go.mod` lines that changed since the previous release tag, or every module for the first release. `go.mod` lists every module compiled into the provider, indirect ones included. "None" means the release compiles the same modules as the previous one.
+2. For each changed module, check that the new version is a published release of that module (a tag or release notes on its repository), and look for anything unexpected: a module nobody added on purpose, a version published days ago without notes, a repository that changed owner.
+3. Approve. If in doubt, reject: nothing is built, signed or published, and no GitHub release is created. The tag stays, since the tag ruleset forbids deleting it, and the next release takes the next version number. GoReleaser starts the notes of that next release at the rejected tag: add the commits of the rejected one to them by hand, and say why the number was skipped. Never re-sign or replace a published version: release a new one.
 
 ## Versions
 
@@ -48,7 +56,7 @@ These steps need an owner of the GitHub organization and of the registry namespa
 2. **Apply the rulesets**, done on 2026-10-29 through the API (`POST /repos/ippontech/terraform-provider-mistral/rulesets` with each file), or in *Settings > Rules > Rulesets > Import a ruleset*:
    - `.github/rulesets/main.json`: linear history, pull request required, the CI checks required, no force push. It requires no approval: GitHub does not let the author of a pull request approve it, and with one maintainer the review is the merge itself. Raise `required_approving_review_count` to 1, with `require_last_push_approval`, once a second maintainer reviews.
    - `.github/rulesets/version-tags.json`: only the *Repository admin* role (`RepositoryRole` 5 in the bypass list) creates a version tag, and nobody updates or deletes one.
-3. **Create the `release` environment** with its two secrets. Restrict it to the `v*` tags, and require a reviewer if wanted.
+3. **Create the `release` environment** with its two secrets. Restrict it to the `v*` tags and require a reviewer, who checks the module changes before each release (*Approving a release*). The environment exists since 2026-10-29, restricted to `v*` with Hector Basset as reviewer; its two secrets are still to add.
 4. **Prepare the acceptance tests.** Create the `acctest` environment, restricted to `main`, with the secrets `MISTRAL_API_KEY` (a standard key of a workspace of a dedicated test organization) and, once Mistral grants Admin API access, `MISTRAL_ADMIN_API_KEY`, and the variables of the objects the tests cannot create: `MISTRAL_ACC_WORKSPACE_ID` (the workspace of `MISTRAL_API_KEY`), `MISTRAL_ACC_ADMIN_USER_ID` (an organization admin) and `MISTRAL_ACC_MEMBER_USER_ID` (another member of that workspace). A test whose variable is missing skips. Then set the repository variable `MISTRAL_ACCTEST` to `true`: until then `testacc.yml` skips its job.
 5. **Create the `spec-drift` label**, which `spec-drift.yml` puts on the issue it opens.
 6. **Publish on the Terraform Registry.** Sign in to https://registry.terraform.io with GitHub, choose *Publish > Provider*, then the `ippontech` organization and `terraform-provider-mistral`. The `ippontech` namespace already has a signing key (the one used for `ippontech/anthropic`). The Registry requires RSA or DSA keys, and rejects the default ECC type. The Registry installs a webhook and ingests every later release by itself.
