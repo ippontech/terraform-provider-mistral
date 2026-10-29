@@ -1,0 +1,20 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Models"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Lists the models that the workspace of the standard API key (`api_key`) can use: the Mistral models, and the fine-tuned models of the organization.
+
+~> **Not verified against the live API.** This data source is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+Filter the list with a `for` expression, as in the example.
+
+## Example Usage
+
+{{ tffile "examples/data-sources/mistral_models/data-source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

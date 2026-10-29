@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 
 	"github.com/ippontech/terraform-provider-mistral/internal/providerdata"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/models"
 )
 
 // registration is a resource or data source factory with what its
@@ -77,7 +78,10 @@ func resourceRegistrations() []registration[resource.Resource] {
 }
 
 func dataSourceRegistrations() []registration[datasource.DataSource] {
-	return []registration[datasource.DataSource]{}
+	return []registration[datasource.DataSource]{
+		{New: models.NewModelDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
+		{New: models.NewModelsDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
+	}
 }
 
 // factories returns the New function of each registration.

@@ -1,0 +1,22 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Models"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Reads a model that the workspace of the standard API key (`api_key`) can use, by its ID or one of its aliases: a Mistral model, or a fine-tuned model of the organization.
+
+~> **Not verified against the live API.** This data source is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+An alias such as `mistral-medium-latest` moves to a newer model when Mistral releases one, and the data source follows it on the next plan. `id` keeps the value you set; `canonical_id` is the model the alias resolves to at that plan. Set `id` to a dated model ID to keep the same model across plans.
+
+When Mistral has planned the deprecation of the model, the read succeeds with a warning that gives the date and the model Mistral recommends instead.
+
+## Example Usage
+
+{{ tffile "examples/data-sources/mistral_model/data-source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
