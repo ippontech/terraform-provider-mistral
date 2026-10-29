@@ -1,0 +1,25 @@
+# gitleaks configuration: the default rules, plus one for Mistral API keys.
+# Read by the gitleaks workflow (.github/workflows/gitleaks.yml) and the
+# pre-commit hook.
+#
+# A deliberate fake secret in a test takes an inline `gitleaks:allow` comment
+# on its line, not an allowlist here.
+title = "terraform-provider-mistral"
+
+[extend]
+useDefault = true
+
+# The default rules have no Mistral rule (gitleaks 8.30.1), and Mistral
+# documents no prefix for its keys, so this rule keys off the context: the
+# word mistral in the name being assigned (MISTRAL_API_KEY, mistral_admin_key,
+# "mistralApiKey"), then an alphanumeric token of 32 to 64 characters. The
+# entropy floor keeps placeholders such as "xxxxxxxx..." out. It does not
+# catch a key with no mistral context around it: the generic-api-key default
+# rule is the net for those.
+[[rules]]
+id = "mistral-api-key"
+description = "Identified a Mistral API key or Admin API key assigned to a variable or setting named after Mistral."
+regex = '''(?i)mistral[a-z0-9_.\-]{0,40}['"]?\s{0,3}(?:=|:|:=|=>)\s{0,3}['"]?([a-z0-9]{32,64})\b'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["mistral"]

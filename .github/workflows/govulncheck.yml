@@ -1,0 +1,147 @@
+name: Govulncheck
+
+# Reports known vulnerabilities that the provider's code actually reaches
+# (call-graph analysis against the Go vulnerability database). On a pull
+# request or in the merge queue, it fails only on the findings the change
+# brings in: the base branch is scanned too, and the findings it already has
+# are listed without failing, so an advisory published after a PR was opened
+# does not turn every PR red until the fix lands. The weekly run on main, and a
+# manual run, fail on any finding: that is how new advisories are reported.
+on:
+  pull_request:
+  merge_group:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # sum.golang.org: `go install <pkg>@<version>` verifies the downloaded
+      # modules against the checksum database, which proxy.golang.org does not
+      # mirror. vuln.go.dev: the vulnerability database govulncheck queries.
+      # raw.githubusercontent.com: setup-go's manifest when the API call fails.
+      # go.dev, dl.google.com: its fallback when the toolchain is not in that
+      # manifest yet (go.dev/dl, whose downloads redirect to dl.google.com).
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            dl.google.com:443
+            github.com:443
+            go.dev:443
+            proxy.golang.org:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
+            vuln.go.dev:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The tree the change merges into. A directory starting with a dot, and
+      # holding its own go.mod, is outside the `./...` of the head scan.
+      - name: Check out the base branch
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: .govulncheck-base
+          persist-credentials: false
+
+      # setup-go reads the `toolchain` directive of go.mod before the `go`
+      # one, so the scan runs on the Go version releases are built with: the
+      # standard-library findings are only meaningful for that version.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install govulncheck
+        env:
+          # renovate: datasource=go depName=golang.org/x/vuln
+          GOVULNCHECK_VERSION: v1.9.0
+        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+
+      # Exits non-zero only for vulnerabilities the code can reach; findings in
+      # packages or modules that are required but never called are listed with
+      # `-show verbose` and do not fail the job.
+      - name: Run govulncheck
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        run: govulncheck ./...
+
+      # With -format json, govulncheck exits 0 whatever it finds (and non-zero
+      # on an error, which fails the step). A finding is reachable when the
+      # first frame of its trace names a function, the rule its text output
+      # applies. Each tree is scanned with the Go its own go.mod names (the
+      # head through setup-go, the base through GOTOOLCHAIN): its toolchain
+      # line, else its go line. Standard-library findings then match each
+      # side's Go, so a change that raises or lowers the toolchain shows the
+      # ones it brings in. go downloads the base's Go as the
+      # golang.org/toolchain module, from proxy.golang.org (sum.golang.org
+      # checks it).
+      - name: Run govulncheck on the change and on its base
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        shell: bash
+        env:
+          LC_ALL: C
+        run: |
+          out="${RUNNER_TEMP}/govulncheck"
+          mkdir -p "${out}"
+          reachable() {
+            jq -r 'select((.finding.trace[0].function // "") != "") | .finding.osv' "$1" | sort -u
+          }
+          describe() {
+            jq -rn --arg id "$1" '[inputs | select(.osv.id == $id) | .osv.summary // ""][0] // "" | gsub("%"; "%25") | gsub("[\r\n]+"; " ")' "${out}/head.json" "${out}/base.json"
+          }
+
+          # A go line with a language version (go 1.26) means its first
+          # release (go1.26.0); GOTOOLCHAIN only takes a release.
+          base_go=$(awk '$1 == "toolchain" { print $2; exit }' .govulncheck-base/go.mod || true)
+          if [ -z "${base_go}" ]; then
+            base_go="go$(awk '$1 == "go" { print $2; exit }' .govulncheck-base/go.mod || true)"
+            if [[ "${base_go}" =~ ^go1\.[0-9]+$ ]]; then
+              base_go="${base_go}.0"
+            fi
+          fi
+          echo "Scanning the change with $(go env GOVERSION) and its base with ${base_go}."
+
+          govulncheck -format json ./... > "${out}/head.json"
+          if ! [[ "${base_go}" =~ ^go1\.[0-9] ]] ||
+            ! (cd .govulncheck-base && GOTOOLCHAIN="${base_go}" govulncheck -format json ./... > "${out}/base.json"); then
+            echo "::warning::govulncheck could not scan the base branch with ${base_go}, so every finding counts as new."
+            : > "${out}/base.json"
+          fi
+
+          reachable "${out}/head.json" > "${out}/head.ids"
+          reachable "${out}/base.json" > "${out}/base.ids"
+          comm -23 "${out}/head.ids" "${out}/base.ids" > "${out}/new.ids"
+          comm -12 "${out}/head.ids" "${out}/base.ids" > "${out}/known.ids"
+          comm -13 "${out}/head.ids" "${out}/base.ids" > "${out}/fixed.ids"
+
+          while read -r id; do
+            echo "::error title=New vulnerability::${id} is reachable with this change, not on the base branch: $(describe "${id}") https://pkg.go.dev/vuln/${id}"
+          done < "${out}/new.ids"
+          while read -r id; do
+            echo "::warning title=Vulnerability already on the base branch::${id} is reachable on the base branch too, so it does not fail this check: $(describe "${id}") https://pkg.go.dev/vuln/${id}"
+          done < "${out}/known.ids"
+          while read -r id; do
+            echo "${id} is reachable on the base branch and no longer with this change."
+          done < "${out}/fixed.ids"
+
+          echo "Reachable vulnerabilities: $(wc -l < "${out}/new.ids") new with this change, $(wc -l < "${out}/known.ids") already on the base branch, $(wc -l < "${out}/fixed.ids") fixed by it."
+          if [ -s "${out}/new.ids" ]; then
+            echo "Run 'govulncheck ./...' for the call stacks of the new findings."
+            exit 1
+          fi

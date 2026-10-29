@@ -23,10 +23,47 @@ repos:
     rev: v1.109.3
     hooks:
       - id: terraform_fmt
+      - id: terraform_tflint
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:
       - id: actionlint
+  - repo: local
+    hooks:
+      - id: poutine
+        name: poutine
+        language: system
+        entry: mise exec -- poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
+        pass_filenames: false
+        always_run: true
+      # Secrets in the staged changes, with the rules of .gitleaks.toml, at the
+      # version pinned in mise.toml (the gitleaks workflow scans the commits of
+      # a pull request). A deliberate fake in a test takes `gitleaks:allow` at
+      # the end of its line.
+      - id: gitleaks
+        name: gitleaks
+        language: system
+        entry: mise exec -- gitleaks git --pre-commit --staged --config .gitleaks.toml --redact --no-banner --verbose
+        pass_filenames: false
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.181.0
+    hooks:
+      - id: semgrep
+        args:
+          - --config=tools/semgrep.yml
+          - --error
+        files: ^\.github/
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 3.3.29
+    hooks:
+      - id: checkov
+        pass_filenames: false
+        args:
+          - --directory=.github/workflows
+          - --framework=github_actions
+          - --quiet
+          - --compact
+        files: ^\.github/workflows/
   # Go hooks run the versions pinned in mise.toml (Go, golangci-lint), so they
   # match `make lint` and the CI lint job.
   - repo: local

@@ -1,0 +1,190 @@
+name: Security
+
+on:
+  pull_request:
+  merge_group:
+
+permissions: {}
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            release-assets.githubusercontent.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+  poutine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            release-assets.githubusercontent.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same method as tflint below: the expected hash is pinned here, not read
+      # from the release's checksums file. Bump POUTINE_VERSION and
+      # POUTINE_SHA256 together (value from the target release's
+      # poutine_<version>_checksums.txt, poutine_Linux_x86_64.tar.gz line).
+      # Renovate only bumps the version, so its PR fails here until the hash is
+      # updated by hand; renovate.json excludes poutine from automerge.
+      - name: Install poutine
+        env:
+          # renovate: datasource=github-releases depName=boostsecurityio/poutine
+          POUTINE_VERSION: v1.1.6
+          POUTINE_SHA256: abde716599a65608b023a69ed9316e5f083a7bca48612151c2720835883757ea
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/poutine_Linux_x86_64.tar.gz"
+          curl -fsSL -o "${archive}" \
+            "https://github.com/boostsecurityio/poutine/releases/download/${POUTINE_VERSION}/poutine_Linux_x86_64.tar.gz"
+          echo "${POUTINE_SHA256}  ${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/poutine"
+          mkdir -p "${install_dir}"
+          tar xzf "${archive}" -C "${install_dir}" poutine
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/poutine" version
+
+      - name: Run poutine
+        run: poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
+
+  semgrep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The official image, pinned by digest, run as a step rather than as the
+      # job container so that harden-runner still applies (it does nothing in a
+      # container job). The runner pulls the image while setting up the job.
+      # Same rules and flags as the pre-commit hook; no metrics, no version
+      # check, so the scan itself makes no network call.
+      - name: Run semgrep
+        uses: docker://semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
+        with:
+          args: semgrep scan --config tools/semgrep.yml --error --metrics=off --disable-version-check
+
+  tflint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            release-assets.githubusercontent.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installed from the GitHub release with checksum verification rather than
+      # through a third-party action (poutine flags setup-tflint's unverified
+      # creator, and a pinned binary is the smaller supply-chain surface).
+      #
+      # The expected hash is pinned here, not read from the release's own
+      # checksums.txt: both files come from the same source, so a compromised
+      # release would poison the checksum along with the binary. Bump
+      # TFLINT_VERSION and TFLINT_SHA256 together (value from the target
+      # release's checksums.txt, tflint_linux_amd64.zip line). Renovate only
+      # bumps the version, so its PR goes red here until the hash is updated
+      # by hand; renovate.json therefore excludes tflint from automerge.
+      - name: Install tflint
+        env:
+          # renovate: datasource=github-releases depName=terraform-linters/tflint
+          TFLINT_VERSION: v0.64.0
+          TFLINT_SHA256: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+        run: |
+          set -euo pipefail
+          base="https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}"
+          curl -fsSLO "${base}/tflint_linux_amd64.zip"
+          echo "${TFLINT_SHA256}  tflint_linux_amd64.zip" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/tflint"
+          mkdir -p "${install_dir}"
+          unzip -o -q tflint_linux_amd64.zip -d "${install_dir}"
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/tflint" --version
+
+      # .tflint.hcl enables the full terraform ruleset (preset "all"); the
+      # bundled ruleset needs no `tflint --init`. Lints every module in the
+      # repo (examples, tests), not just the files a commit touched (#229).
+      - name: Run tflint
+        run: tflint --recursive --format compact
+
+  checkov:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            pypi.org:443
+            release-assets.githubusercontent.com:443
+            www.bridgecrew.cloud:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run checkov
+        uses: bridgecrewio/checkov-action@c3e106d5f8f4253a6de5110efb41a080f83db294 # v12.3135.0
+        with:
+          directory: .github/workflows
+          framework: github_actions
+          quiet: true
+          compact: true
+          output_format: cli
