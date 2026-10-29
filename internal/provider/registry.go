@@ -18,6 +18,7 @@ import (
 	"github.com/ippontech/terraform-provider-mistral/internal/services/promptsandskills"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/roles"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/serviceaccounts"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/spendlimits"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/usergroups"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/users"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/workspaces"
@@ -96,6 +97,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: promptsandskills.NewPromptResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: promptsandskills.NewSkillResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: serviceaccounts.NewServiceAccountResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: spendlimits.NewOrganizationSpendLimitResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: usergroups.NewUserGroupResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: usergroups.NewUserGroupMemberResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
 		{New: usergroups.NewUserGroupWorkspaceResource, Audience: providerdata.Admin, Stability: beta, Live: fakeOnly},
