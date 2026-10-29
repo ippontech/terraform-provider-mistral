@@ -1,6 +1,6 @@
 # `pre-commit install` installs both hook types: the hooks below run at the
 # pre-commit stage, and the commit-msg hook checks the Conventional Commits
-# format that semantic-release reads (CONTRIBUTING.md, Conventional Commits).
+# format that the release notes group by (CONTRIBUTING.md, Conventional Commits).
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
 repos:

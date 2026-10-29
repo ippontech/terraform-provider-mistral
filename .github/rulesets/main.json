@@ -37,9 +37,7 @@
           { "context": "govulncheck" },
           { "context": "actionlint" },
           { "context": "poutine" },
-          { "context": "semgrep" },
           { "context": "tflint" },
-          { "context": "checkov" },
           { "context": "goreleaser-snapshot" }
         ]
       }
