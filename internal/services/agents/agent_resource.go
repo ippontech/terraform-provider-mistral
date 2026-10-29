@@ -315,6 +315,13 @@ func (r *AgentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 	agent, err := r.client.GetAgent(ctx, state.ID.ValueString())
 	if client.IsNotFound(err) {
+		// Set the identity before removing: during an import,
+		// terraform-plugin-framework v1.19.0 fails a Read that removes the
+		// resource without one, instead of Terraform's "Cannot import
+		// non-existent remote object".
+		if resp.Identity != nil {
+			resp.Diagnostics.Append(resp.Identity.Set(ctx, agentIdentity{ID: state.ID})...)
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
