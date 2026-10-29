@@ -44,10 +44,10 @@ The release job holds the signing key. It follows the rules for privileged jobs 
 
 These steps need an owner of the GitHub organization and of the registry namespaces.
 
-1. **Move the repository.** Transfer it to the `ippontech` organization and make it public. GitHub redirects the old URLs.
-2. **Import the rulesets** in *Settings > Rules > Rulesets > Import a ruleset*:
-   - `.github/rulesets/main.json`: linear history, pull request required, the CI checks required, no force push. Its `required_approving_review_count` of 1 needs a second maintainer; set it to 0 until there is one.
-   - `.github/rulesets/version-tags.json`, then add the *Repository admin* role to its bypass list in the ruleset page: the JSON leaves the list empty rather than guess the role's ID, and with an empty list nobody can create a version tag.
+1. **Move the repository.** Transfer it to the `ippontech` organization and make it public. GitHub redirects the old URLs. Done on 2026-10-29.
+2. **Apply the rulesets**, done on 2026-10-29 through the API (`POST /repos/ippontech/terraform-provider-mistral/rulesets` with each file), or in *Settings > Rules > Rulesets > Import a ruleset*:
+   - `.github/rulesets/main.json`: linear history, pull request required, the CI checks required, no force push. It requires no approval: GitHub does not let the author of a pull request approve it, and with one maintainer the review is the merge itself. Raise `required_approving_review_count` to 1, with `require_last_push_approval`, once a second maintainer reviews.
+   - `.github/rulesets/version-tags.json`: only the *Repository admin* role (`RepositoryRole` 5 in the bypass list) creates a version tag, and nobody updates or deletes one.
 3. **Create the `release` environment** with its two secrets. Restrict it to the `v*` tags, and require a reviewer if wanted.
 4. **Prepare the acceptance tests.** Create the `acctest` environment, restricted to `main`, with the secrets `MISTRAL_API_KEY` (a standard key of a workspace of a dedicated test organization) and, once Mistral grants Admin API access, `MISTRAL_ADMIN_API_KEY`, and the variables of the objects the tests cannot create: `MISTRAL_ACC_WORKSPACE_ID` (the workspace of `MISTRAL_API_KEY`), `MISTRAL_ACC_ADMIN_USER_ID` (an organization admin) and `MISTRAL_ACC_MEMBER_USER_ID` (another member of that workspace). A test whose variable is missing skips. Then set the repository variable `MISTRAL_ACCTEST` to `true`: until then `testacc.yml` skips its job.
 5. **Create the `spec-drift` label**, which `spec-drift.yml` puts on the issue it opens.
