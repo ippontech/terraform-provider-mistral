@@ -4,7 +4,7 @@ Thanks for helping. This guide covers the local setup, the checks every pull req
 
 ## Local setup
 
-- **Tools**: the versions are pinned in `mise.toml` (Go, golangci-lint, GoReleaser, Terraform, gitleaks, poutine). With [mise](https://mise.jdx.dev), `mise install` gets them all.
+- **Tools**: the versions are pinned in `mise.toml` (Go, golangci-lint, GoReleaser, Terraform, gitleaks, poutine, zizmor). With [mise](https://mise.jdx.dev), `mise install` gets them all.
 - **Hooks**: `pre-commit install` installs the pre-commit and commit-msg hooks: formatting, lint, tidiness, secret scanning, workflow linters and the Conventional Commits check.
 - **Build and install**: `make install` puts the binary in `$(go env GOPATH)/bin`.
 - **Local binary in Terraform**: `make .dev.tfrc` writes a CLI configuration with a `dev_overrides` block for `registry.terraform.io/ippontech/mistral`. Point Terraform at it with `TF_CLI_CONFIG_FILE=$PWD/.dev.tfrc`.
