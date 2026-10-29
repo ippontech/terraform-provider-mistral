@@ -1,0 +1,83 @@
+name: GoReleaser Release
+
+# Builds, signs and publishes a release when semantic-release pushes a
+# version tag. The Terraform Registry and the OpenTofu Registry ingest the
+# GitHub release (RELEASE.md, Publishing).
+#
+# The job holds the signing key, so it follows the rules for privileged jobs
+# (RELEASE.md, Release security):
+#   - the GPG key and its passphrase are secrets of the protected `release`
+#     environment, not repository secrets;
+#   - no cache is restored or saved: a cache written by a pull request job
+#     could otherwise run code in the job that signs;
+#   - the checkout keeps no credential (persist-credentials: false), and the
+#     modules are verified against go.sum before the build;
+#   - tags are protected by a ruleset (RELEASE.md), so only the release
+#     automation creates them.
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  goreleaser-release:
+    # v0.0.0 is the starting tag semantic-release counts from (RELEASE.md,
+    # Versions): it marks the initial commit, nothing is built for it.
+    # The registries ingest public repositories only.
+    if: ${{ !github.event.repository.private && github.ref_name != 'v0.0.0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            proxy.golang.org:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
+            uploads.github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # GoReleaser reads the previous tag
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Verify module sources
+        run: go mod download && go mod verify
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Release
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          version: v2.19.0
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

@@ -1,0 +1,81 @@
+name: Semantic Release
+
+# On every push to main, semantic-release reads the Conventional Commits since
+# the last version tag, picks the next version (.releaserc), updates
+# CHANGELOG.md, pushes the version tag and creates the GitHub release.
+# goreleaser-release.yml then builds and signs the artifacts for that tag.
+#
+# A tag pushed with the workflow's GITHUB_TOKEN would not start
+# goreleaser-release.yml, so the job uses a GitHub App token. The rules for
+# privileged jobs (RELEASE.md, Release security) apply:
+#   - the App credentials are secrets of the protected `release` environment;
+#   - semantic-release and its plugins are installed from the committed
+#     lockfile (tools/release/package-lock.json) with --ignore-scripts, so no
+#     install script runs and no version floats;
+#   - the App token is created after the install, so no installed code ran
+#     while it existed;
+#   - the checkout keeps no credential; semantic-release reads the token from
+#     its environment;
+#   - no cache is restored or saved.
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # The changelog commit semantic-release pushes must not start a release.
+    # The registries ingest public repositories only, so nothing is released
+    # while the repository is private.
+    if: ${{ !github.event.repository.private && !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            registry.npmjs.org:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Install semantic-release from the lockfile
+        working-directory: tools/release
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.SEMREL_APP_ID }}
+          private-key: ${{ secrets.SEMREL_APP_PRIVATE_KEY }}
+
+      - name: Run semantic-release
+        run: tools/release/node_modules/.bin/semantic-release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
