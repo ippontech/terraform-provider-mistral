@@ -30,12 +30,12 @@ Unit tests need neither. Never commit a key, and never paste one into an issue, 
 | `make terraform-fmt-check terraform-validate terraform-test-mock` | the examples and the offline native tests |
 | `make testacc` | acceptance tests against the live API: they create real objects |
 
-CI runs all of them except `make testacc`, plus gitleaks, govulncheck, actionlint, poutine, semgrep, tflint, checkov and `goreleaser check`.
+CI runs all of them except `make testacc`, plus gitleaks, govulncheck, actionlint, poutine, tflint and `goreleaser check`.
 
 ## Pull requests
 
 - **One issue per pull request**, and one pull request per coherent change: a feature with its tests, docs and examples, or a fix with the test that fails without it.
-- **Titles and commits** follow [Conventional Commits](https://www.conventionalcommits.org): `<type>[(scope)]: <subject>`, with type `feat`, `fix`, `perf`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build` or `ci`. semantic-release computes the version from them (RELEASE.md). A breaking change in 0.x is a `feat` whose description starts with `Breaking in 0.x:`. The `conventional-commits.yml` workflow checks the title, the description and every commit of the pull request, since a rebase merge puts each commit on `main`; it refuses merge commits.
+- **Titles and commits** follow [Conventional Commits](https://www.conventionalcommits.org): `<type>[(scope)][!]: <subject>`, with type `feat`, `fix`, `perf`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build` or `ci`. The release notes group the commits by type, and the maintainer chooses the version from them (RELEASE.md). A breaking change takes `!` after the type (`feat(agents)!: ...`), and in 0.x it publishes a minor version. The `conventional-commits.yml` workflow checks the title and every commit of the pull request, since a rebase merge puts each commit on `main`; it refuses merge commits.
 - **Code** follows *Code and comments* in `CLAUDE.md`: names that say what a value is, a doc comment on every type and function, a comment next to every choice the code cannot explain by itself.
 - **Merges** are squash or rebase only: the history of `main` is linear.
 - **Stacking.** A pull request that depends on another targets that pull request's branch, so its diff shows only its own changes. Once the base is merged, rebase it onto `main`.
