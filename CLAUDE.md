@@ -58,6 +58,16 @@ Stable information goes in a type's name, changing information in its docs: a na
 - Several Admin API objects have no read by ID (workspaces, API keys, invites) and workspace members have no read route at all. Their `Read` goes through one `find` function per type that lists with the narrowest filter and compares the ID; replace that function, nothing else, when Mistral adds the route.
 - No endpoint documents an idempotency key.
 
+## Code and comments
+
+The code is read more often than it is written, by people and by agents that have nothing but the repository.
+
+- **Names** say what a value is (`findWorkspace`, `defaultToolChoice`), never how it was obtained (`resp2`, `tmp`, `helper`).
+- **Doc comments** on every type and function, exported or not: what it does and, when it is not obvious, why. A test file opens with what it covers when its name does not say it.
+- **A comment next to every choice the code cannot explain by itself**: a server-side behaviour, an API quirk, an order of calls, a deliberate omission. It cites the documentation page when there is one, and says when the behaviour is our reading of the specification rather than documented.
+- **No comment that repeats the code.** Code that needs a paragraph to follow is restructured first, and commented only if it stays hard to read.
+- **Area knowledge** that only the next contributor of an area needs goes in that area's `CLAUDE.md`, once, not in comments repeated across files.
+
 ## Provider coding conventions
 
 - **Retries.** Reads, deletes and the upserts the API documents as idempotent (`PUT` of an alias or a share, `PATCH /v1/admin/workspaces/{id}/users`) are retried on 429, 5xx and connection errors. Every other write, a create first, is retried only on 429, or on a connection error before the request was sent: after a 5xx the object may exist, and a replay would create a duplicate. Never add a retry loop around a client call.
@@ -125,7 +135,7 @@ Tool versions are in `mise.toml`; CI pins the same ones.
 
 ## Working rules
 
-- One issue per pull request, one pull request per coherent change, a Conventional Commits title (`feat(agents): ...`). Merges are squash or rebase only; there are no merge commits.
+- One issue per pull request, one pull request per coherent change. The title and every commit follow Conventional Commits (`feat(agents): ...`): CI checks both, and the commit-msg hook runs the same script (`tools/conventional-commits.sh`). Merges are squash or rebase only, and a branch catches up with a rebase: there are no merge commits.
 - Pull requests are stacked while their base is not merged: each targets the branch it builds on.
 - A sub-agent commits locally and never pushes, never comments on GitHub, never reads `.env`, and never calls the live API. The session that briefed it reviews and pushes.
 - Never run `make testacc` or an acceptance test unless you were asked to: it creates real objects in a real organization.
