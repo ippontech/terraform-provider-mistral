@@ -1,0 +1,56 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Prompts and Skills"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Manages a skill of the workspace of the standard API key (`api_key`): versioned instructions, with a description that tells the model when to use them and the files they need.
+
+-> **Public preview at Mistral.** The Skills API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This resource is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+## Versions
+
+A change of `description`, `body` or `assets` creates a new version of the skill, which becomes its latest version; `version` gives its number. Any other change creates no version: a change of the sharing settings updates the skill, and a change of `notes` alone updates the notes of the latest version. When one apply does both, the version comes first.
+
+Mistral keeps every version and none can be deleted: destroying the resource deletes the skill with all its versions. A version created in Studio shows as drift on the next plan, and the apply writes the configuration back as one more version.
+
+Mistral deduplicates a definition it already holds, and the documentation does not say whether it compares it with the latest version only or with every version. If it matches the configuration to an earlier version, the latest version keeps another definition and the apply fails with that reason: change the definition, even slightly, so that Mistral creates a new version.
+
+## Assets
+
+`assets` maps a file name to its content: `content` for a text file, with `file`, and `content_base64` for a binary file, with `filebase64`. The files travel in the request body, so the plan and the state hold their content. When the API returns the same bytes in another form, as bytes for a text file or in another base64 alphabet, the state keeps the configured value.
+
+## Name
+
+The API cannot rename a skill: changing `name` replaces it. The new skill starts again from a first version, without the versions or the aliases of the old one.
+
+## Sharing
+
+`sharing_scope` defaults to `private`. With `workspace`, `workspace_relation` sets the access of the members of the workspace, `writer` by default. The API does not return `workspace_relation`: the state keeps the configured value, a change made in Studio does not show as drift, and an import leaves it unset, so the first apply after an import sets it.
+
+## Not managed yet
+
+The aliases that name a version are not managed by this resource: an update leaves them where they are.
+
+## Example Usage
+
+{{ tffile "examples/resources/mistral_skill/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+In Terraform 1.12 and later, an `import` block can use the resource identity:
+
+{{ tffile "examples/resources/mistral_skill/import-by-identity.tf" }}
+
+{{ .IdentitySchemaMarkdown | trimspace }}
+
+In Terraform and OpenTofu, an `import` block can use the skill ID:
+
+{{ tffile "examples/resources/mistral_skill/import-by-string-id.tf" }}

@@ -13,6 +13,7 @@ import (
 	"github.com/ippontech/terraform-provider-mistral/internal/services/agents"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/connectors"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/models"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/promptsandskills"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/serviceaccounts"
 )
 
@@ -82,6 +83,8 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: agents.NewAgentAliasResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: connectors.NewConnectorResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: connectors.NewConnectorCredentialResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: promptsandskills.NewPromptResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: promptsandskills.NewSkillResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: serviceaccounts.NewServiceAccountResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 	}
 }
