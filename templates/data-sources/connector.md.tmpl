@@ -1,0 +1,22 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: "Connectors"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+Reads a connector that the standard API key (`api_key`) can use, by its name, such as a connector built in AI Studio. Its `id` is the `connector_id` of a `connector` tool of a `mistral_agent`, and of a `mistral_connector_credential`.
+
+-> **Public preview at Mistral.** The Connectors API is in public preview: Mistral can change its fields without a deprecation period, and following them may take a new release of the provider.
+
+~> **Not verified against the live API.** This data source is tested against a fake of the Mistral API written from Mistral's documentation. No acceptance test has run against a Mistral organization yet: please report any difference with the live API in an issue.
+
+The lookup is by name, which is unique in a workspace: the ID of a connector built in AI Studio is a UUID that users do not choose. A private connector is visible only to an API key of its creator with the `Private and shared connectors` access scope.
+
+## Example Usage
+
+{{ tffile "examples/data-sources/mistral_connector/data-source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ippontech/terraform-provider-mistral/internal/providerdata"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/agents"
+	"github.com/ippontech/terraform-provider-mistral/internal/services/connectors"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/models"
 	"github.com/ippontech/terraform-provider-mistral/internal/services/serviceaccounts"
 )
@@ -79,6 +80,8 @@ func resourceRegistrations() []registration[resource.Resource] {
 	return []registration[resource.Resource]{
 		{New: agents.NewAgentResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: agents.NewAgentAliasResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: connectors.NewConnectorResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: connectors.NewConnectorCredentialResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: serviceaccounts.NewServiceAccountResource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 	}
 }
@@ -86,6 +89,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 func dataSourceRegistrations() []registration[datasource.DataSource] {
 	return []registration[datasource.DataSource]{
 		{New: agents.NewAgentDataSource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
+		{New: connectors.NewConnectorDataSource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
 		{New: models.NewModelDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
 		{New: models.NewModelsDataSource, Audience: providerdata.Workspace, Stability: generallyAvailable, Live: fakeOnly},
 		{New: serviceaccounts.NewAssignableServiceAccountRolesDataSource, Audience: providerdata.Workspace, Stability: beta, Live: fakeOnly},
