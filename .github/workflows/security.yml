@@ -1,7 +1,7 @@
 name: Security
 
-# Workflow linters (actionlint, poutine and a pull_request_target guard) and
-# tflint on every pull request. Secrets and vulnerable dependencies have their
+# Workflow linters (actionlint, poutine, zizmor and a pull_request_target
+# guard) and tflint on every pull request. Secrets and vulnerable dependencies have their
 # own workflows (gitleaks.yml, govulncheck.yml).
 
 on:
@@ -90,6 +90,58 @@ jobs:
 
       - name: Run poutine
         run: poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
+
+  zizmor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            release-assets.githubusercontent.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same method as poutine above: the release binary, checked against a
+      # hash pinned here, whose build provenance was verified with
+      # `gh attestation verify <archive> --repo zizmorcore/zizmor`. Bump
+      # ZIZMOR_VERSION and ZIZMOR_SHA256 together; Renovate only bumps the
+      # version, so its PR fails here until the hash is updated by hand.
+      - name: Install zizmor
+        env:
+          # renovate: datasource=github-releases depName=zizmorcore/zizmor
+          ZIZMOR_VERSION: v1.31.1
+          ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -o "${archive}" \
+            "https://github.com/zizmorcore/zizmor/releases/download/${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  ${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/zizmor"
+          mkdir -p "${install_dir}"
+          tar xzf "${archive}" -C "${install_dir}" zizmor
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/zizmor" --version
+
+      # What actionlint and poutine leave out: a cache next to release
+      # tooling, an over-broad App token, credentials kept by a checkout, and,
+      # through the API with this job's read-only token, a pinned SHA that is
+      # not a commit of the action's own repository.
+      - name: Run zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor .
 
   tflint:
     runs-on: ubuntu-latest
