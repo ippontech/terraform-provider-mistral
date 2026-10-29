@@ -49,6 +49,15 @@ cover: test
 	git diff --unified=0 --no-color $(COVER_BASE)...HEAD > coverage-diff.out
 	go run -C tools ./coversummary -config ../.coverage.json -diff ../coverage-diff.out ../$(COVERPROFILE)
 
+# Mutation testing of one package with gremlins, pinned in tools/go.mod:
+# make mutation PKG=./internal/services/agents. Measured and reported in the
+# pull request, never a gate (CLAUDE.md, Test quality). -count=1 makes each
+# run uncached, so the timeout of a mutant comes from a real run.
+mutation:
+	@test -n "$(PKG)" || { echo "PKG is required, for example PKG=./internal/services/agents"; exit 1; }
+	go build -C tools -o $(CURDIR)/.gobin/gremlins github.com/go-gremlins/gremlins/cmd/gremlins
+	GOFLAGS=-count=1 .gobin/gremlins unleash --invert-logical --invert-loopctrl --workers 2 --timeout-coefficient 10 $(PKG)
+
 testacc:
 	TF_ACC=1 go test -v -cover -timeout 120m ./...
 
@@ -95,4 +104,4 @@ spec-drift:
 	curl -sSf --retry 3 -o "$$spec" $(SPEC_URL) && \
 	go run -C tools ./specdrift -spec "$$spec" -root .. $(SPECDRIFT_FLAGS)
 
-.PHONY: spec-drift build install fmt tidy-check lint complexity generate test cover testacc terraform-fmt-check terraform-validate terraform-test-mock terraform-test
+.PHONY: spec-drift build install fmt tidy-check lint complexity generate test cover mutation testacc terraform-fmt-check terraform-validate terraform-test-mock terraform-test

@@ -6,6 +6,9 @@
 package tools
 
 import (
+	// gremlins is the mutation tester of make mutation, pinned here so that
+	// every run uses the version of this go.mod.
+	_ "github.com/go-gremlins/gremlins/cmd/gremlins"
 	_ "github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs"
 )
 
