@@ -11,6 +11,9 @@ import (
 	"testing/iotest"
 )
 
+// profile lists two blocks twice, as two test binaries instrumenting the same
+// package do: the 14.2,15.3 block of a_resource.go is covered in its second
+// occurrence only, the block of a_data_source.go in neither.
 const profile = `mode: atomic
 example.com/m/internal/services/a/a_resource.go:10.2,12.3 2 1
 example.com/m/internal/services/a/a_resource.go:14.2,15.3 3 0
@@ -20,6 +23,8 @@ example.com/m/internal/services/a/a_resource.go:14.2,15.3 3 7
 example.com/m/internal/services/a/a_data_source.go:5.1,6.2 4 0
 `
 
+// TestParseProfile checks the statements counted per file, a block listed
+// twice counting once.
 func TestParseProfile(t *testing.T) {
 	files, err := parseProfile(strings.NewReader(profile))
 	if err != nil {
@@ -45,6 +50,7 @@ func TestParseProfile(t *testing.T) {
 	}
 }
 
+// TestParseProfileErrors checks that a malformed profile is refused.
 func TestParseProfileErrors(t *testing.T) {
 	for name, input := range map[string]string{
 		"empty":      "",
@@ -67,6 +73,8 @@ func TestParseProfileErrors(t *testing.T) {
 	}
 }
 
+// TestWriteSummary checks the total and the files -match selects, least
+// covered first.
 func TestWriteSummary(t *testing.T) {
 	files, err := parseProfile(strings.NewReader(profile))
 	if err != nil {
@@ -91,6 +99,7 @@ func TestWriteSummary(t *testing.T) {
 	}
 }
 
+// TestParseProfileSkipsBlankLines checks that blank lines are ignored.
 func TestParseProfileSkipsBlankLines(t *testing.T) {
 	files, err := parseProfile(strings.NewReader("mode: set\n\nexample.com/m/a.go:1.1,2.2 2 1\n  \nexample.com/m/a.go:3.1,4.2 1 0\n\n"))
 	if err != nil {
@@ -101,6 +110,8 @@ func TestParseProfileSkipsBlankLines(t *testing.T) {
 	}
 }
 
+// TestParseProfileErrorMessages checks that a parse error says the line and
+// the problem, and that a read error comes through.
 func TestParseProfileErrorMessages(t *testing.T) {
 	for input, want := range map[string]string{
 		"":                                 "empty coverage profile",

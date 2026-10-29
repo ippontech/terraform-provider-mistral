@@ -41,8 +41,8 @@ test:
 
 # Unit tests, then the coverage gate of the CI coverage job (.coverage.json,
 # tools/coversummary): the diff rule against COVER_BASE (committed changes
-# only), the ratchet, the floor and the per-package floor, followed by the
-# coverage of each resource and data source file. Fails like the CI job does.
+# only), the total and the per-package minimum, followed by the coverage of
+# each resource and data source file. Fails like the CI job does.
 COVER_BASE ?= origin/main
 cover: COVERPROFILE := coverage.out
 cover: test
