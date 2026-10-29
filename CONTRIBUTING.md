@@ -32,7 +32,7 @@ Unit tests need neither. Never commit a key, and never paste one into an issue, 
 | `make testacc` | acceptance tests against the live API: they create real objects |
 | `make spec-drift` | the operations the provider calls against Mistral's live specification; `SPECDRIFT_FLAGS=-update` rewrites `tools/specdrift/fingerprints.txt` after a fake serves a new route |
 
-CI runs all of them except `make mutation`, `make testacc` and `make spec-drift`, plus gitleaks, govulncheck, actionlint, poutine, zizmor, tflint, `goreleaser check`, and an offline check that `tools/specdrift/fingerprints.txt` lists every route the fakes serve. `testacc.yml` runs the acceptance tests after each merge to `main` and every week; `spec-drift.yml` compares the fingerprints with Mistral's specification every week and opens an issue labelled `spec-drift` on a change.
+CI runs all of them except `make mutation`, `make testacc` and `make spec-drift`, plus gitleaks, govulncheck, actionlint, poutine, zizmor, tflint, `goreleaser check`, and an offline check that `tools/specdrift/fingerprints.txt` lists every route the fakes serve. `testacc.yml` runs the acceptance tests after each merge to `main` and on demand; `spec-drift.yml` compares the fingerprints with Mistral's specification every week and opens an issue labelled `spec-drift` on a change.
 
 ## Pull requests
 
