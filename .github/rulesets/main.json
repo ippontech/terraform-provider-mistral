@@ -37,6 +37,7 @@
           { "context": "govulncheck" },
           { "context": "actionlint" },
           { "context": "poutine" },
+          { "context": "zizmor" },
           { "context": "tflint" },
           { "context": "goreleaser-snapshot" }
         ]
