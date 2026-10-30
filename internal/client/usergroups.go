@@ -163,11 +163,11 @@ func (cl *Client) ListUserGroups(ctx context.Context, search string) ([]UserGrou
 			q.Set("search", search)
 		}
 		var out struct {
-			Total int         `json:"total"`
+			Total *int        `json:"total"`
 			Items []UserGroup `json:"items"`
 		}
 		err := cl.do(ctx, call{method: http.MethodGet, path: userGroupsPath, query: q, audience: adminKey}, &out)
-		return out.Items, out.Total, err
+		return out.Items, pageTotal(out.Total), err
 	}
 	groups, err := collect(func(visit func(UserGroup) bool) error {
 		return walkPages(ctx, 1, userGroupPageSize, fetch, visit)
@@ -207,11 +207,11 @@ func (cl *Client) RemoveUserGroupMember(ctx context.Context, groupID, userID str
 func (cl *Client) FindUserGroupMember(ctx context.Context, groupID, userID string) (*UserGroupMember, error) {
 	fetch := func(ctx context.Context, page int) ([]UserGroupMember, int, error) {
 		var out struct {
-			Total   int               `json:"total"`
+			Total   *int              `json:"total"`
 			Members []UserGroupMember `json:"members"`
 		}
 		err := cl.do(ctx, call{method: http.MethodGet, path: escapePath(userGroupsPath, groupID, "members"), query: userGroupPage(page), audience: adminKey}, &out)
-		return out.Members, out.Total, err
+		return out.Members, pageTotal(out.Total), err
 	}
 	return find(func(visit func(UserGroupMember) bool) error {
 		return walkPages(ctx, 1, userGroupPageSize, fetch, visit)
@@ -252,11 +252,11 @@ func (cl *Client) RemoveUserGroupWorkspace(ctx context.Context, groupID, workspa
 func (cl *Client) FindUserGroupWorkspace(ctx context.Context, groupID, workspaceID string) (*UserGroupWorkspace, error) {
 	fetch := func(ctx context.Context, page int) ([]UserGroupWorkspace, int, error) {
 		var out struct {
-			Total int                  `json:"total"`
+			Total *int                 `json:"total"`
 			Items []UserGroupWorkspace `json:"items"`
 		}
 		err := cl.do(ctx, call{method: http.MethodGet, path: escapePath(userGroupsPath, groupID, "workspaces"), query: userGroupPage(page), audience: adminKey}, &out)
-		return out.Items, out.Total, err
+		return out.Items, pageTotal(out.Total), err
 	}
 	return find(func(visit func(UserGroupWorkspace) bool) error {
 		return walkPages(ctx, 1, userGroupPageSize, fetch, visit)

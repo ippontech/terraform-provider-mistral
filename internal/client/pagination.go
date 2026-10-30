@@ -76,6 +76,22 @@ func walkPages[T any](ctx context.Context, first, size int, fetch func(ctx conte
 	return errTooManyPages
 }
 
+// pageTotal returns the total of a page answer, decoded into a *int, or -1,
+// the "no total" of walkPages, when the answer has none or a null one.
+// Decoded into a plain int, a missing total would be 0 and end the walk
+// after its first page.
+//
+// The specification marks total as required and not null in the workspaces
+// and user groups lists (only the users list may answer null), so reading
+// theirs through pageTotal is defensive: an answer that leaves it out still
+// gives every item, not the first page only.
+func pageTotal(total *int) int {
+	if total == nil {
+		return -1
+	}
+	return *total
+}
+
 // walkOffset walks a list paged by offset and limit. The walk ends on a page
 // shorter than limit.
 func walkOffset[T any](ctx context.Context, limit int, fetch func(ctx context.Context, offset int) ([]T, error), visit func(T) bool) error {

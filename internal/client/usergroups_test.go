@@ -34,6 +34,24 @@ func pagedUserGroups(srv *sdktest.Server, route, key string, n int, item func(i 
 	})
 }
 
+// pagesWithoutTotal serves 105 items on route, two pages of 100, as
+// pagedUserGroups does, but with a null total when null is true and no total
+// otherwise, so that only the short second page can end a walk.
+func pagesWithoutTotal(srv *sdktest.Server, route, key string, item func(i int) map[string]any, null bool) {
+	all := make([]map[string]any, 105)
+	for i := range all {
+		all[i] = item(i)
+	}
+	srv.Handle(route, func(w http.ResponseWriter, r *http.Request) {
+		page, size := sdktest.QueryInt(r, "page", 1), sdktest.QueryInt(r, "page_size", 25)
+		body := map[string]any{key: sdktest.PageOf(all, page, size, 1), "page": page, "page_size": size}
+		if null {
+			body["total"] = nil
+		}
+		sdktest.WriteJSON(w, http.StatusOK, body)
+	})
+}
+
 // A group without parents goes with parent_group_ids: [], never null: the
 // specification types the field as an array.
 func TestCreateUserGroupSendsATopLevelGroupWithAnEmptyParentList(t *testing.T) {
@@ -213,6 +231,74 @@ func TestUserGroupMembers(t *testing.T) {
 	srv.AssertJSONBodies("POST /v1/admin/user-groups/{group_uuid}/members", `{"user_uuids": ["usr_200"]}`)
 	srv.AssertJSONBodies("DELETE /v1/admin/user-groups/{group_uuid}/members", `{"user_uuids": ["usr_200"]}`)
 	srv.AssertCredential("", sdktest.AdminKey)
+}
+
+// Without a total, or with a null one, the three walks go on until a short
+// page: 105 items take two pages of 100. The specification marks total as
+// required; this covers an answer that leaves it out anyway.
+func TestUserGroupWalksWithoutATotal(t *testing.T) {
+	t.Parallel()
+	for name, null := range map[string]bool{"missing": false, "null": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv := sdktest.NewServer(t)
+			pagesWithoutTotal(srv, routeUserGroups, "items", func(i int) map[string]any {
+				return map[string]any{"uuid": fmt.Sprintf("grp_%d", i), "name": fmt.Sprintf("Engineering %d", i)}
+			}, null)
+			pagesWithoutTotal(srv, routeUserGroupMembers, "members", func(i int) map[string]any {
+				return map[string]any{"user_uuid": fmt.Sprintf("usr_%d", i), "email": fmt.Sprintf("u%d@example.com", i)}
+			}, null)
+			pagesWithoutTotal(srv, routeUserGroupWorkspace, "items", func(i int) map[string]any {
+				return map[string]any{"workspace_uuid": fmt.Sprintf("ws_%d", i), "roles": []any{}}
+			}, null)
+			c := newTestClient(srv)
+			ctx := context.Background()
+
+			if groups, err := c.ListUserGroups(ctx, ""); err != nil || len(groups) != 105 || groups[104].ID != "grp_104" {
+				t.Errorf("ListUserGroups = %d groups, %v, want 105", len(groups), err)
+			}
+			if m, err := c.FindUserGroupMember(ctx, "grp_1", "usr_104"); err != nil || m == nil {
+				t.Errorf("FindUserGroupMember of the last member = %+v, %v", m, err)
+			}
+			if a, err := c.FindUserGroupWorkspace(ctx, "grp_1", "ws_104"); err != nil || a == nil {
+				t.Errorf("FindUserGroupWorkspace of the last assignment = %+v, %v", a, err)
+			}
+			for _, route := range []string{routeUserGroups, routeUserGroupMembers, routeUserGroupWorkspace} {
+				srv.AssertQueries(route, "page=1&page_size=100", "page=2&page_size=100")
+			}
+		})
+	}
+}
+
+// With a total, the three walks end on a full last page, without reading an
+// empty third page.
+func TestUserGroupWalksStopAtTheTotal(t *testing.T) {
+	t.Parallel()
+	srv := sdktest.NewServer(t)
+	pagedUserGroups(srv, routeUserGroups, "items", 200, func(i int) map[string]any {
+		return map[string]any{"uuid": fmt.Sprintf("grp_%d", i)}
+	})
+	pagedUserGroups(srv, routeUserGroupMembers, "members", 200, func(i int) map[string]any {
+		return map[string]any{"user_uuid": fmt.Sprintf("usr_%d", i)}
+	})
+	pagedUserGroups(srv, routeUserGroupWorkspace, "items", 200, func(i int) map[string]any {
+		return map[string]any{"workspace_uuid": fmt.Sprintf("ws_%d", i), "roles": []any{}}
+	})
+	c := newTestClient(srv)
+	ctx := context.Background()
+
+	if groups, err := c.ListUserGroups(ctx, ""); err != nil || len(groups) != 200 {
+		t.Errorf("ListUserGroups = %d groups, %v", len(groups), err)
+	}
+	if m, err := c.FindUserGroupMember(ctx, "grp_1", "usr_missing"); err != nil || m != nil {
+		t.Errorf("FindUserGroupMember = %+v, %v", m, err)
+	}
+	if a, err := c.FindUserGroupWorkspace(ctx, "grp_1", "ws_missing"); err != nil || a != nil {
+		t.Errorf("FindUserGroupWorkspace = %+v, %v", a, err)
+	}
+	for _, route := range []string{routeUserGroups, routeUserGroupMembers, routeUserGroupWorkspace} {
+		srv.AssertQueries(route, "page=1&page_size=100", "page=2&page_size=100")
+	}
 }
 
 // Adding a member is not documented as idempotent: a 5xx is not replayed.

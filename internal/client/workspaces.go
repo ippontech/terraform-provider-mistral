@@ -124,11 +124,11 @@ func (cl *Client) walkWorkspaces(ctx context.Context, f WorkspaceFilter, visit f
 		q.Set("page", strconv.Itoa(page))
 		q.Set("page_size", strconv.Itoa(workspacePageSize))
 		var out struct {
-			Total int         `json:"total"`
+			Total *int        `json:"total"`
 			Items []Workspace `json:"items"`
 		}
 		err := cl.do(ctx, call{method: http.MethodGet, path: "/v1/admin/workspaces", query: q, audience: adminKey}, &out)
-		return out.Items, out.Total, err
+		return out.Items, pageTotal(out.Total), err
 	}
 	return walkPages(ctx, 1, workspacePageSize, fetch, visit)
 }
