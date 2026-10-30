@@ -41,13 +41,23 @@ jobs:
       # one. The runner's yq (mikefarah yq 4) parses each workflow and lists
       # the events of on: in any YAML form (string, list or mapping, block or
       # flow style, quoted, through an alias), which a grep of the lines
-      # cannot. A workflow yq cannot parse fails the step.
+      # cannot. It fails closed: a workflow yq cannot parse fails the step,
+      # and so does a YAML tag on on:, its items or its keys other than the
+      # plain ones (!x, !!set), which the event list would not read. Every
+      # workflow file is read, hidden or with an extension in any case.
       - name: Refuse pull_request_target
         run: |
           set -euo pipefail
-          shopt -s nullglob
+          shopt -s nullglob nocaseglob dotglob
           refused=0
           for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+            [ -f "${workflow}" ] || continue
+            tags=$(yq 'explode(.) | .on | (., (select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[])) | tag' "${workflow}")
+            if grep -qvxE '!!(str|seq|map|null)' <<<"${tags}"; then
+              echo "::error file=${workflow},title=pull_request_target::on: holds a YAML tag other than !!str, !!seq, !!map or !!null, so this check cannot list its events: remove the tag."
+              refused=1
+              continue
+            fi
             events=$(yq 'explode(.) | .on | (select(tag == "!!str"), (select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[]))' "${workflow}")
             if grep -qx 'pull_request_target' <<<"${events}"; then
               echo "::error file=${workflow},title=pull_request_target::No workflow may use pull_request_target: it runs fork code with the repository's secrets."
