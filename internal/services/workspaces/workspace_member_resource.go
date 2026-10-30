@@ -305,7 +305,9 @@ func findWorkspaceMember(ctx context.Context, cl *client.Client, workspaceID, us
 // /v1/admin/roles name the UUIDs, "the authoritative list of roles and their
 // UUIDs" (https://docs.mistral.ai/admin/identity-access/roles-permissions). A
 // raw role the list does not name is kept as it is, so that the plan shows
-// it and the next apply sets the configured roles.
+// it and the next apply sets the configured roles. A name that raw_roles
+// repeats, or that two raw values map to, is kept once: role_names is a set,
+// and a set with a duplicate element fails every plan.
 func roleNames(ctx context.Context, cl *client.Client, raw []string) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -325,7 +327,8 @@ func roleNames(ctx context.Context, cl *client.Client, raw []string) ([]string, 
 		}
 		names = append(names, r)
 	}
-	return names, nil
+	slices.Sort(names)
+	return slices.Compact(names), nil
 }
 
 // writeWorkspaceMember sets m as the state, with its ID, and the resource

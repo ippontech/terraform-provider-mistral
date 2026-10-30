@@ -252,6 +252,48 @@ func TestWorkspaceMemberResourceSetsBackRolesChangedOutsideTerraform(t *testing.
 	f.AssertCalled(routePutMembers, 3)
 }
 
+// raw_roles that repeat a role, by UUID, by legacy code, or as a UUID and
+// the name the roles list gives it, read as one element each: role_names is
+// a set, which refuses a duplicate element.
+func TestWorkspaceMemberResourceReadsRepeatedRolesOnce(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	admin, ada := f.addUser("admin@example.com"), f.addUser("ada@example.com")
+	var workspaceID string
+	config := memberConfig(admin, ada, `  role_names = ["dev"]`)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: config, Check: readWorkspaceID(&workspaceID)},
+			{
+				// The same role twice by its UUID, and once by its name: an
+				// empty plan.
+				PreConfig: func() { f.setRawRoles(workspaceID, ada, roleIDs["dev"], "dev", roleIDs["dev"]) },
+				Config:    config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(memberAddr, tfjsonpath.New("role_names"), roleSet("dev")),
+				},
+			},
+			{
+				// A legacy code twice is drift, shown once.
+				PreConfig:          func() { f.setRawRoles(workspaceID, ada, "A", roleIDs["dev"], "A") },
+				RefreshState:       true,
+				ExpectNonEmptyPlan: true,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(memberAddr, "role_names.#", "2"),
+					resource.TestCheckTypeSetElemAttr(memberAddr, "role_names.*", "A"),
+					resource.TestCheckTypeSetElemAttr(memberAddr, "role_names.*", "dev"),
+				),
+			},
+		},
+	})
+	f.AssertCalled(routePutMembers, 1)
+}
+
 // The PATCH is an upsert the documentation calls idempotent: a 5xx is
 // replayed, and the create succeeds.
 func TestWorkspaceMemberResourceRetriesTheUpsert(t *testing.T) {
