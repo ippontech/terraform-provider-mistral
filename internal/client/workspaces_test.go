@@ -103,6 +103,45 @@ func TestListWorkspacesWalksEveryPage(t *testing.T) {
 	srv.AssertCredential("", sdktest.AdminKey)
 }
 
+// Without a total, or with a null one, the walk goes on until a short page:
+// 105 workspaces take two pages of 100, for the list and the find. The
+// specification marks total as required; this covers an answer that leaves
+// it out anyway.
+func TestWorkspaceWalksWithoutATotal(t *testing.T) {
+	t.Parallel()
+	for name, null := range map[string]bool{"missing": false, "null": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv := sdktest.NewServer(t)
+			pagesWithoutTotal(srv, "GET /v1/admin/workspaces", "items", func(i int) map[string]any {
+				return map[string]any{"uuid": fmt.Sprintf("ws-%d", i), "name": fmt.Sprintf("ws-%d", i)}
+			}, null)
+			c := newTestClient(srv)
+			ctx := context.Background()
+
+			if got, err := c.ListWorkspaces(ctx, WorkspaceFilter{}); err != nil || len(got) != 105 || got[104].ID != "ws-104" {
+				t.Errorf("ListWorkspaces = %d workspaces, %v, want 105", len(got), err)
+			}
+			if ws, err := c.FindWorkspace(ctx, WorkspaceFilter{}, func(w Workspace) bool { return w.ID == "ws-104" }); err != nil || ws == nil {
+				t.Errorf("FindWorkspace of the last workspace = %+v, %v", ws, err)
+			}
+			srv.AssertQueries("GET /v1/admin/workspaces",
+				"page=1&page_size=100", "page=2&page_size=100", "page=1&page_size=100", "page=2&page_size=100")
+		})
+	}
+}
+
+// With a total, a walk whose last page is full ends there, without reading
+// an empty third page.
+func TestWorkspaceWalkStopsAtTheTotal(t *testing.T) {
+	t.Parallel()
+	srv := workspacePages(t, 200)
+	if got, err := newTestClient(srv).ListWorkspaces(context.Background(), WorkspaceFilter{}); err != nil || len(got) != 200 {
+		t.Fatalf("ListWorkspaces = %d workspaces, %v", len(got), err)
+	}
+	srv.AssertQueries("GET /v1/admin/workspaces", "page=1&page_size=100", "page=2&page_size=100")
+}
+
 // An answer with no workspace is an empty list, not nil.
 func TestListWorkspacesAnswersAnEmptyList(t *testing.T) {
 	t.Parallel()
