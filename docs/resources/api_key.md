@@ -27,7 +27,7 @@ The API cannot change a key. Changing `workspace_id`, `user_id`, `name` or `expi
 
 When an expiration policy applies to the workspace, Mistral creates a key asked without an expiration date, or with a date beyond the maximum, "with the latest expiration date allowed by the policy". `expiration` keeps the date of the configuration, and `expiration_date` gives the date Mistral set: a shortened date does not plan a replacement.
 
-An expired key stays in the state for as long as Mistral lists it. To renew it, change `expiration`, which replaces the key. Adding `expiration` to a key created without one replaces it too, since the API cannot set an expiry on an existing key, unless the key already expires on or before that date (`expiration_date`, as a policy may have set it): the apply then records the date in place, and the key keeps its secret.
+An expired key stays in the state for as long as Mistral lists it. To renew it, change `expiration`, which replaces the key. Adding `expiration` to a key created without one replaces it too, since the API cannot set an expiry on an existing key, unless the key is still valid and already expires on or before that date: an `expiration_date` after today (UTC), as a policy may have set it, and not after `expiration`. The apply then records the date in place, and the key keeps its secret. A key that never expires, expires later, expires today or has expired is replaced.
 
 The Admin Panel also sets a connector access scope on a key. The API does not take one, and the documentation does not say which scope a key created through the API gets.
 
@@ -68,7 +68,7 @@ output "backend_key_expires_on" {
 
 ### Optional
 
-- `expiration` (String) The date the key should expire, in RFC 3339 date format (`2027-06-30`). When null, the key never expires, unless an expiration policy applies. The state keeps the configured date: `expiration_date` gives the date Mistral set. Changing it replaces the key, except after an import, where the first apply records it in place, and except when it is added to a key whose `expiration_date` is already on or before it, which records it in place too.
+- `expiration` (String) The date the key should expire, in RFC 3339 date format (`2027-06-30`). When null, the key never expires, unless an expiration policy applies. The state keeps the configured date: `expiration_date` gives the date Mistral set. Changing it replaces the key, except when it is added to a key that has none in the state, as after its create without one or after an import, and whose `expiration_date` is after today (UTC) and on or before it: the apply then records it in place.
 - `name` (String) The name of the key, of at most 255 characters. Changing it replaces the key.
 
 ### Read-Only
@@ -81,7 +81,7 @@ output "backend_key_expires_on" {
 
 ## Import
 
-The import reads the key without its secret: `key` stays null. The API does not return `user_id`, and the provider never reads `expiration` back, so both are null after an import: the first apply records the configured values in place and does not replace the key.
+The import reads the key without its secret: `key` stays null. The API does not return `user_id`, and the provider never reads `expiration` back, so both are null after an import. The first apply records `user_id` in place. It records `expiration` in place under the rule of *Expiration* for a date added to a key: when the imported key is still valid and its `expiration_date` is on or before `expiration`. Otherwise, as for a key that never expires, the plan replaces the key, and its applications lose access: to import a key without replacing it, leave `expiration` out, or set it to `expiration_date`.
 
 In Terraform and OpenTofu 1.12 and later, an `import` block can use the resource identity:
 
