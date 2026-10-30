@@ -22,6 +22,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +31,13 @@ const DefaultBaseURL = "https://api.mistral.ai"
 
 // maxErrorBody bounds what an error keeps of a response body.
 const maxErrorBody = 4 << 10
+
+// responseHeaderTimeout bounds the wait for the headers of an answer, from
+// the moment the request, body included, is written. Every call the provider
+// makes answers within seconds (an upload answers once the file is stored,
+// and the processing goes on asynchronously), so 90 s leaves a wide margin
+// for a slow gateway and only cuts an exchange that nothing will answer.
+const responseHeaderTimeout = 90 * time.Second
 
 // Config configures a Client.
 type Config struct {
@@ -41,7 +49,8 @@ type Config struct {
 	AdminAPIKey string
 	// UserAgent is sent on every request.
 	UserAgent string
-	// HTTPClient sends the requests; http.DefaultClient when nil.
+	// HTTPClient sends the requests; when nil, a client that bounds the wait
+	// for an answer (newHTTPClient).
 	HTTPClient *http.Client
 	// Retry is the retry policy; the zero value retries nothing.
 	Retry RetryPolicy
@@ -61,9 +70,27 @@ func New(cfg Config) *Client {
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = newHTTPClient(responseHeaderTimeout)
 	}
 	return &Client{cfg: cfg, http: hc}
+}
+
+// newHTTPClient returns an HTTP client with the settings of
+// http.DefaultTransport (proxy from the environment, dial and TLS handshake
+// timeouts, HTTP/2) that gives up on an answer whose headers have not come
+// headerTimeout after the request was written. http.DefaultClient waits
+// forever: a server or a proxy that accepts the connection and never answers
+// would block a Terraform run until it is killed.
+//
+// The timeout is the transport's ResponseHeaderTimeout, whose timer starts
+// once the body is written (net/http, HTTP/1 and HTTP/2 alike), so a long
+// upload is never cut. http.Client.Timeout is left unset on purpose: it
+// bounds the whole exchange, the upload included. A request that timed out
+// was written, so the retry policy replays a read but not a create.
+func newHTTPClient(headerTimeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = headerTimeout
+	return &http.Client{Transport: transport}
 }
 
 // audience selects the credential of a request.
@@ -129,8 +156,12 @@ func (cl *Client) do(ctx context.Context, c call, out any) error {
 // the connection, which decides whether a write may be replayed after a
 // connection error.
 func (cl *Client) send(ctx context.Context, c call, payload []byte) (*http.Response, bool, error) {
-	var sent bool
-	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { sent = true }}
+	// The transport calls WroteRequest from the goroutine that writes the
+	// body, which can still be running when Do returns: a server may answer
+	// an upload (a 413, say) before reading all of it. httptrace allows a
+	// hook to run after the request has completed, hence the atomic.
+	var sent atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { sent.Store(true) }}
 	ctx = httptrace.WithClientTrace(ctx, trace)
 
 	u := cl.cfg.BaseURL + c.path
@@ -168,7 +199,7 @@ func (cl *Client) send(ctx context.Context, c call, payload []byte) (*http.Respo
 	cl.authenticate(req, c.audience)
 
 	resp, err := cl.http.Do(req)
-	return resp, sent, err
+	return resp, sent.Load(), err
 }
 
 // newRequest builds the request of a call, unless escapePath refused its

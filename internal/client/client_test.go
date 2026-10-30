@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -126,11 +128,99 @@ func TestDoReportsAnUnencodableBody(t *testing.T) {
 func TestNewDefaults(t *testing.T) {
 	t.Parallel()
 	c := New(Config{BaseURL: "https://example.com/"})
-	if c.cfg.BaseURL != "https://example.com" || c.http != http.DefaultClient {
+	if c.cfg.BaseURL != "https://example.com" {
 		t.Errorf("New = %+v", c.cfg)
 	}
 	if c := New(Config{}); c.cfg.BaseURL != DefaultBaseURL {
 		t.Errorf("default base URL = %q", c.cfg.BaseURL)
+	}
+	own := &http.Client{}
+	if c := New(Config{HTTPClient: own}); c.http != own {
+		t.Error("a configured HTTPClient must be used as it is")
+	}
+}
+
+// Without a configured HTTPClient, the client bounds the wait for the
+// headers of an answer, on a copy of http.DefaultTransport, and sets no
+// overall timeout, which would cut a long upload.
+func TestNewBoundsTheWaitForAnAnswer(t *testing.T) {
+	t.Parallel()
+	hc := New(Config{}).http
+	transport, ok := hc.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", hc.Transport)
+	}
+	if got := transport.ResponseHeaderTimeout; got != responseHeaderTimeout || got < time.Minute {
+		t.Errorf("ResponseHeaderTimeout = %v, want %v, and a minute at least so that a slow answer is not cut", got, responseHeaderTimeout)
+	}
+	if hc.Timeout != 0 {
+		t.Errorf("http.Client.Timeout = %v, want none", hc.Timeout)
+	}
+	if transport == http.DefaultTransport || transport.Proxy == nil {
+		t.Error("the transport must be a copy of http.DefaultTransport, proxy settings included")
+	}
+}
+
+// A server that accepts the connection and never answers fails the call
+// once the header timeout has passed on each attempt, instead of blocking
+// it. A read is replayed after such a timeout, like after any connection
+// error.
+func TestAServerThatNeverAnswersTimesOut(t *testing.T) {
+	t.Parallel()
+	srv := sdktest.NewServer(t)
+	srv.Handle("GET /v1/agents/{agent_id}", func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // until the client gives up and closes the connection
+	})
+	c := New(Config{BaseURL: srv.URL, HTTPClient: newHTTPClient(20 * time.Millisecond), Retry: fastRetry})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := c.GetAgent(ctx, "ag_1")
+	if netErr, ok := errors.AsType[net.Error](err); !ok || !netErr.Timeout() {
+		t.Errorf("err = %v, want a timeout", err)
+	}
+	if ctx.Err() != nil {
+		t.Error("the call ran until the context ended, not until the header timeout")
+	}
+	srv.AssertCalled("GET /v1/agents/{agent_id}", 4)
+}
+
+// lateTraceTransport answers at once and reports the end of the write
+// afterwards, from a goroutine of its own. net/http does the same when a
+// server answers before reading the whole body, and the httptrace contract
+// allows it: a hook may be called after the request has completed.
+type lateTraceTransport struct {
+	// reported is closed once the hook has run.
+	reported chan struct{}
+}
+
+func (tr lateTraceTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	trace := httptrace.ContextClientTrace(r.Context())
+	go func() {
+		defer close(tr.reported)
+		_ = r.Body.Close()
+		trace.WroteRequest(httptrace.WroteRequestInfo{})
+	}()
+	return &http.Response{
+		StatusCode: http.StatusRequestEntityTooLarge,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"detail":"file too large"}`)),
+		Request:    r,
+	}, nil
+}
+
+// A write that the transport reports after the answer is back is read
+// without a data race: run under -race, as make test does, this test fails
+// if send records the write in a plain variable.
+func TestSendReadsALateWriteReportWithoutARace(t *testing.T) {
+	t.Parallel()
+	transport := lateTraceTransport{reported: make(chan struct{})}
+	c := New(Config{BaseURL: "https://api.example", HTTPClient: &http.Client{Transport: transport}, Retry: fastRetry})
+
+	err := c.do(context.Background(), call{method: http.MethodPost, path: "/v1/libraries/lib_1/documents", body: map[string]any{}, audience: workspaceKey}, nil)
+	<-transport.reported
+	if StatusCode(err) != http.StatusRequestEntityTooLarge {
+		t.Errorf("err = %v, want the 413", err)
 	}
 }
 
