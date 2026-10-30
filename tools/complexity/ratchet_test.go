@@ -540,6 +540,14 @@ func TestRepeatedInitsArePairedBySource(t *testing.T) {
 			},
 		},
 		{
+			name: "edited in place, alone in its file",
+			base: tree{"internal/a/a.go": pkg(ten), "internal/a/b.go": pkg(one)}, head: tree{"internal/a/a.go": pkg(six), "internal/a/b.go": pkg(one)},
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/a.go":              {6, 0, added},
+				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+		{
 			name: "edited in place, brought to the cap",
 			base: tree{"internal/a/a.go": pkg(ten, one)}, head: tree{"internal/a/a.go": pkg(scoring("init", 2), one)}, passes: true,
 			entries: map[string]pairingEntry{"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed}},
@@ -581,8 +589,9 @@ func TestRepeatedInitsArePairedBySource(t *testing.T) {
 
 // TestBuildTaggedTwinsArePairedByFile checks that the declarations of a
 // repeated name other than init, one per build-tagged file, are paired by
-// file when their source changed: Go allows one declaration of such a name
-// per file. A twin that moves and changes counts as new.
+// file first, whatever their source: Go allows one declaration of such a name
+// per file. A twin moved to a renamed file pairs by its source if unchanged,
+// and counts as new if changed.
 func TestBuildTaggedTwinsArePairedByFile(t *testing.T) {
 	t.Parallel()
 	ten, six, one := scoring("F", 4), scoring("F", 3), scoring("F", 1)
@@ -607,6 +616,24 @@ func TestBuildTaggedTwinsArePairedByFile(t *testing.T) {
 			base: tree{"internal/a/f_linux.go": pkg(scoring("(T) init", 4)), "internal/a/f_windows.go": pkg(scoring("(T) init", 1))},
 			head: tree{"internal/a/f_linux.go": pkg(scoring("(T) init", 3)), "internal/a/f_windows.go": pkg(scoring("(T) init", 1))}, passes: true,
 			entries: map[string]pairingEntry{"internal/a.(T).init in internal/a/f_linux.go": {6, 10, touched}},
+		},
+		{
+			name: "raised by copying the former body of another twin",
+			base: tree{"internal/a/f_linux.go": pkg(ten), "internal/a/f_windows.go": pkg(one)},
+			head: tree{"internal/a/f_linux.go": pkg(scoring("F", 2)), "internal/a/f_windows.go": pkg(ten)},
+			entries: map[string]pairingEntry{
+				"internal/a.F in internal/a/f_linux.go":   {3, 10, lowered},
+				"internal/a.F in internal/a/f_windows.go": {10, 1, crossed},
+			},
+		},
+		{
+			name: "moved to a renamed file, unchanged",
+			base: tree{"internal/a/f_linux.go": pkg(ten), "internal/a/f_windows.go": pkg(one)},
+			head: tree{"internal/a/f_unix.go": pkg(ten), "internal/a/f_windows.go": pkg(six)},
+			entries: map[string]pairingEntry{
+				"internal/a.F in internal/a/f_unix.go":    {10, 10, unchanged},
+				"internal/a.F in internal/a/f_windows.go": {6, 1, crossed},
+			},
 		},
 		{
 			name: "moved to another file and edited",

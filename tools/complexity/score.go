@@ -186,32 +186,43 @@ func positionKeys(fns []function) []string {
 
 // matchRepeated pairs the declarations of one name at the merge base (b) with
 // those of the working tree (h), and returns for each of b the index of its
-// pair in h, -1 when it has none. It pairs only on evidence, in three passes,
-// each over the declarations the passes before left unpaired, in file then
-// declaration order:
+// pair in h, -1 when it has none. It pairs only on evidence, in two passes,
+// the second over the declarations the first left unpaired, each in file then
+// declaration order.
+//
+// For init functions and functions named _, which Go lets a file declare more
+// than once, the name says nothing about which declaration is which, and
+// only the source does:
 //
 //  1. same file and same source: unchanged;
-//  2. same source: unchanged, moved to another file of the package;
-//  3. same file, for a name that is not nameless (a build-tagged twin): Go
-//     allows one declaration of such a name per file, so the file and the
-//     name identify it as a name declared once does: changed in place.
+//  2. same source in another file: unchanged, moved within the package.
+//
+// For another name (a build-tagged twin), Go allows one declaration per file,
+// so the file and the name identify a declaration as a name declared once
+// does, and the file comes first: a twin whose new body copies the former
+// body of another twin is still compared with its own former version.
+//
+//  1. same file, changed or not;
+//  2. same source, among the declarations left, whose files the other tree
+//     does not have: unchanged, moved to a renamed file.
 //
 // Any other declaration stays unpaired, new in the working tree or gone from
 // the merge base, and is never compared with the score of another
-// declaration. Among several init functions, nothing but the source tells
-// one from another, neither the name nor the position: an init that a change
-// edits counts as new, and must score the cap or less even when it was above
-// it at the merge base; the report says so (writeReport).
+// declaration. An init among several that a change edits thus counts as new,
+// and must score the cap or less even when it was above it at the merge
+// base; the report says so (writeReport).
 func matchRepeated(b, h []function) []int {
 	m := matching{base: b, head: h, partner: slices.Repeat([]int{-1}, len(b)), taken: make([]bool, len(h))}
-	m.pair(func(bf, hf function) bool { return bf.file == hf.file && bytes.Equal(bf.src, hf.src) })
-	m.pair(func(bf, hf function) bool { return bytes.Equal(bf.src, hf.src) })
-	if !slices.ContainsFunc(append(slices.Clone(b), h...), func(fn function) bool { return fn.nameless }) {
+	sameSource := func(bf, hf function) bool { return bytes.Equal(bf.src, hf.src) }
+	if slices.ContainsFunc(append(slices.Clone(b), h...), func(fn function) bool { return fn.nameless }) {
+		m.pair(func(bf, hf function) bool { return bf.file == hf.file && sameSource(bf, hf) })
+	} else {
 		baseLeft, headLeft := m.unpairedByFile()
 		m.pair(func(bf, hf function) bool {
 			return bf.file == hf.file && baseLeft[bf.file] == 1 && headLeft[bf.file] == 1
 		})
 	}
+	m.pair(sameSource)
 	return m.partner
 }
 
