@@ -39,8 +39,8 @@ repos:
         pass_filenames: false
         always_run: true
       # The audits of the zizmor CI job, offline: those that query the GitHub
-      # API (impostor-commit, known-vulnerable-actions, ref-confusion) need a
-      # token and run in CI only.
+      # API (impostor-commit, known-vulnerable-actions, ref-confusion,
+      # ref-version-mismatch) need a token and run in CI only.
       - id: zizmor
         name: zizmor
         language: system
