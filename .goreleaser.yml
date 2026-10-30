@@ -53,7 +53,11 @@ signs:
       # need to pass the batch flag to indicate its not interactive.
       - "--batch"
       - "--local-user"
-      - "{{ .Env.GPG_FINGERPRINT }}" # set this environment variable for your signing key
+      # The "!" makes gpg sign with this exact key, the primary key the
+      # registries know (goreleaser-release.yml, Check the signing key): a
+      # fingerprint alone lets gpg pick the newest signing subkey, which the
+      # key registered for the namespace may not hold.
+      - "{{ .Env.GPG_FINGERPRINT }}!"
       - "--output"
       - "${signature}"
       - "--detach-sign"
