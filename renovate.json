@@ -44,8 +44,9 @@
       "groupSlug": "go-deps"
     },
     {
-      "description": "Renovate updates a module with go get, which leaves go.mod and go.sum untidy, and the lint job's make tidy-check then fails the pull request: go mod tidy after every Go module update.",
+      "description": "Renovate updates a module with go get, which leaves go.mod and go.sum untidy, and the lint job's make tidy-check then fails the pull request: go mod tidy after every minor, patch or digest update. Not after a major one, whose module path changes (/vN) while the imports keep the old one: tidy would drop the new requirement and leave an empty pull request. Renovate already skips tidy there (gomod artifacts, unless gomodUpdateImportPaths is set); the rule says so rather than rely on it. A major update stays a migration by hand, which CI fails until the imports move: gomodUpdateImportPaths would rewrite them with marwan-at-work/mod at its latest version, an unpinned tool editing the code of a large diff.",
       "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "postUpdateOptions": ["gomodTidy"]
     },
     {
