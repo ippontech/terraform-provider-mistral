@@ -32,10 +32,9 @@ const DefaultBaseURL = "https://api.mistral.ai"
 // maxErrorBody bounds what an error keeps of a response body.
 const maxErrorBody = 4 << 10
 
-// responseHeaderTimeout bounds the wait for the headers of an answer, from
-// the moment the request, body included, is written. Every call the provider
-// makes answers within seconds (an upload answers once the file is stored,
-// and the processing goes on asynchronously), so 90 s leaves a wide margin
+// responseHeaderTimeout bounds the wait for the headers of an answer to a
+// call other than an upload, from the moment the request, body included, is
+// written. Those calls answer within seconds, so 90 s leaves a wide margin
 // for a slow gateway and only cuts an exchange that nothing will answer.
 const responseHeaderTimeout = 90 * time.Second
 
@@ -49,8 +48,8 @@ type Config struct {
 	AdminAPIKey string
 	// UserAgent is sent on every request.
 	UserAgent string
-	// HTTPClient sends the requests; when nil, a client that bounds the wait
-	// for an answer (newHTTPClient).
+	// HTTPClient sends the requests, uploads included; when nil, the clients
+	// of newHTTPClients.
 	HTTPClient *http.Client
 	// Retry is the retry policy; the zero value retries nothing.
 	Retry RetryPolicy
@@ -58,39 +57,56 @@ type Config struct {
 
 // Client calls the Mistral API.
 type Client struct {
-	cfg  Config
+	cfg Config
+	// http sends every call but the uploads.
 	http *http.Client
+	// upload sends the multipart calls.
+	upload *http.Client
 }
 
 // New returns a Client for cfg.
 func New(cfg Config) *Client {
+	return newClient(cfg, responseHeaderTimeout)
+}
+
+// newClient is New with the bound on the wait for an answer as a parameter,
+// so that a test can shorten it.
+func newClient(cfg Config, headerTimeout time.Duration) *Client {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
 	}
-	hc := cfg.HTTPClient
-	if hc == nil {
-		hc = newHTTPClient(responseHeaderTimeout)
+	calls, uploads := cfg.HTTPClient, cfg.HTTPClient
+	if calls == nil {
+		calls, uploads = newHTTPClients(headerTimeout)
 	}
-	return &Client{cfg: cfg, http: hc}
+	return &Client{cfg: cfg, http: calls, upload: uploads}
 }
 
-// newHTTPClient returns an HTTP client with the settings of
-// http.DefaultTransport (proxy from the environment, dial and TLS handshake
-// timeouts, HTTP/2) that gives up on an answer whose headers have not come
-// headerTimeout after the request was written. http.DefaultClient waits
-// forever: a server or a proxy that accepts the connection and never answers
-// would block a Terraform run until it is killed.
+// newHTTPClients returns the HTTP clients of a Client configured without
+// one. Both have the settings of http.DefaultTransport (proxy from the
+// environment, dial and TLS handshake timeouts, HTTP/2); neither sets
+// http.Client.Timeout, which would bound the whole exchange, upload
+// included.
 //
-// The timeout is the transport's ResponseHeaderTimeout, whose timer starts
-// once the body is written (net/http, HTTP/1 and HTTP/2 alike), so a long
-// upload is never cut. http.Client.Timeout is left unset on purpose: it
-// bounds the whole exchange, the upload included. A request that timed out
-// was written, so the retry policy replays a read but not a create.
-func newHTTPClient(headerTimeout time.Duration) *http.Client {
+// calls gives up on an answer whose headers have not come headerTimeout
+// after the request was written (the transport's ResponseHeaderTimeout).
+// http.DefaultClient waits forever: a server or a proxy that accepts the
+// connection and never answers would block a Terraform run until it is
+// killed. A request that timed out was written, so the retry policy replays
+// a read but not a create.
+//
+// uploads, for the multipart calls, has no such bound. Its timer would start
+// once the body is written, but behind a TLS-inspecting or DLP proxy that
+// buffers a whole upload before forwarding it, that is when the body reaches
+// the proxy: the proxy's own transfer to the API would count in the bound,
+// and a large document could fail. An upload is bounded by its context
+// instead, the timeouts.create of mistral_library_document.
+func newHTTPClients(headerTimeout time.Duration) (calls, uploads *http.Client) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = headerTimeout
-	return &http.Client{Transport: transport}
+	bounded := transport.Clone()
+	bounded.ResponseHeaderTimeout = headerTimeout
+	return &http.Client{Transport: bounded}, &http.Client{Transport: transport}
 }
 
 // audience selects the credential of a request.
@@ -152,16 +168,22 @@ func (cl *Client) do(ctx context.Context, c call, out any) error {
 	}
 }
 
-// send makes one attempt. sent reports whether the request was written to
-// the connection, which decides whether a write may be replayed after a
-// connection error.
+// send makes one attempt. sent reports whether the whole request was
+// written to the connection, which decides whether a write may be replayed
+// after a connection error.
 func (cl *Client) send(ctx context.Context, c call, payload []byte) (*http.Response, bool, error) {
 	// The transport calls WroteRequest from the goroutine that writes the
 	// body, which can still be running when Do returns: a server may answer
 	// an upload (a 413, say) before reading all of it. httptrace allows a
-	// hook to run after the request has completed, hence the atomic.
+	// hook to run after the request has completed, hence the atomic. A write
+	// that failed (a broken pipe on a reused keep-alive connection) did not
+	// deliver the request, so a create may still be replayed.
 	var sent atomic.Bool
-	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { sent.Store(true) }}
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		if info.Err == nil {
+			sent.Store(true)
+		}
+	}}
 	ctx = httptrace.WithClientTrace(ctx, trace)
 
 	u := cl.cfg.BaseURL + c.path
@@ -198,7 +220,11 @@ func (cl *Client) send(ctx context.Context, c call, payload []byte) (*http.Respo
 	}
 	cl.authenticate(req, c.audience)
 
-	resp, err := cl.http.Do(req)
+	hc := cl.http
+	if c.form != nil {
+		hc = cl.upload // newHTTPClients says why
+	}
+	resp, err := hc.Do(req)
 	return resp, sent.Load(), err
 }
 

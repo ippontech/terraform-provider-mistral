@@ -135,30 +135,43 @@ func TestNewDefaults(t *testing.T) {
 		t.Errorf("default base URL = %q", c.cfg.BaseURL)
 	}
 	own := &http.Client{}
-	if c := New(Config{HTTPClient: own}); c.http != own {
-		t.Error("a configured HTTPClient must be used as it is")
+	if c := New(Config{HTTPClient: own}); c.http != own || c.upload != own {
+		t.Error("a configured HTTPClient must send every call, uploads included")
 	}
 }
 
 // Without a configured HTTPClient, the client bounds the wait for the
-// headers of an answer, on a copy of http.DefaultTransport, and sets no
-// overall timeout, which would cut a long upload.
+// headers of an answer, except for uploads, on copies of
+// http.DefaultTransport, and sets no overall timeout, which would cut a long
+// upload.
 func TestNewBoundsTheWaitForAnAnswer(t *testing.T) {
 	t.Parallel()
-	hc := New(Config{}).http
+	c := New(Config{})
+	calls, uploads := copyOfDefaultTransport(t, c.http), copyOfDefaultTransport(t, c.upload)
+	if got := calls.ResponseHeaderTimeout; got != responseHeaderTimeout || got < time.Minute {
+		t.Errorf("ResponseHeaderTimeout = %v, want %v, and a minute at least so that a slow answer is not cut", got, responseHeaderTimeout)
+	}
+	if got := uploads.ResponseHeaderTimeout; got != 0 {
+		t.Errorf("ResponseHeaderTimeout of the uploads = %v, want none", got)
+	}
+}
+
+// copyOfDefaultTransport returns the transport of hc, after checking that
+// it is a copy of http.DefaultTransport, proxy settings included, and that
+// hc sets no overall timeout.
+func copyOfDefaultTransport(t *testing.T, hc *http.Client) *http.Transport {
+	t.Helper()
 	transport, ok := hc.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("transport = %T, want *http.Transport", hc.Transport)
 	}
-	if got := transport.ResponseHeaderTimeout; got != responseHeaderTimeout || got < time.Minute {
-		t.Errorf("ResponseHeaderTimeout = %v, want %v, and a minute at least so that a slow answer is not cut", got, responseHeaderTimeout)
+	if transport == http.DefaultTransport || transport.Proxy == nil {
+		t.Error("the transport must be a copy of http.DefaultTransport, proxy settings included")
 	}
 	if hc.Timeout != 0 {
 		t.Errorf("http.Client.Timeout = %v, want none", hc.Timeout)
 	}
-	if transport == http.DefaultTransport || transport.Proxy == nil {
-		t.Error("the transport must be a copy of http.DefaultTransport, proxy settings included")
-	}
+	return transport
 }
 
 // A server that accepts the connection and never answers fails the call
@@ -171,7 +184,11 @@ func TestAServerThatNeverAnswersTimesOut(t *testing.T) {
 	srv.Handle("GET /v1/agents/{agent_id}", func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done() // until the client gives up and closes the connection
 	})
-	c := New(Config{BaseURL: srv.URL, HTTPClient: newHTTPClient(20 * time.Millisecond), Retry: fastRetry})
+	c := newClient(Config{BaseURL: srv.URL, Retry: fastRetry}, 20*time.Millisecond)
+	// Counted at the transport: under load, an attempt can time out before
+	// the fake has dispatched it to the handler.
+	transport := &countingTransport{next: c.http.Transport}
+	c.http.Transport = transport
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -182,7 +199,79 @@ func TestAServerThatNeverAnswersTimesOut(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Error("the call ran until the context ended, not until the header timeout")
 	}
-	srv.AssertCalled("GET /v1/agents/{agent_id}", 4)
+	if got := transport.n.Load(); got != 4 {
+		t.Errorf("%d attempts, want 1 + MaxRetries", got)
+	}
+}
+
+// An upload is not bounded by the header timeout, which a proxy that
+// buffers the whole upload would make count its own transfer, while a create
+// with a JSON body that answers as late is cut and, being a create, not
+// replayed.
+func TestAnUploadIsNotCutByTheHeaderTimeout(t *testing.T) {
+	t.Parallel()
+	srv := sdktest.NewServer(t)
+	answerLate := func(body map[string]any) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(100 * time.Millisecond) // five times the header timeout below
+			sdktest.WriteJSON(w, http.StatusCreated, body)
+		}
+	}
+	srv.Handle("POST /v1/libraries/{library_id}/documents", answerLate(document))
+	srv.Handle("POST /v1/libraries", answerLate(library))
+	c := newClient(Config{BaseURL: srv.URL, Retry: fastRetry}, 20*time.Millisecond)
+	ctx := context.Background()
+
+	if _, created, err := c.UploadDocument(ctx, "lib_1", textFile("a.txt", "a")); err != nil || !created {
+		t.Errorf("UploadDocument = %v, %v, want a new document", created, err)
+	}
+	_, err := c.CreateLibrary(ctx, CreateLibraryRequest{Name: "n", OwnerType: "Workspace"})
+	if netErr, ok := errors.AsType[net.Error](err); !ok || !netErr.Timeout() {
+		t.Errorf("CreateLibrary err = %v, want a timeout", err)
+	}
+	srv.AssertCalled("POST /v1/libraries/{library_id}/documents", 1)
+	srv.AssertCalled("POST /v1/libraries", 1)
+}
+
+// failedWriteTransport fails its first attempt as a broken keep-alive
+// connection does: the write of the request fails, WroteRequest reports the
+// error, and RoundTrip returns it. Later attempts answer 201.
+type failedWriteTransport struct {
+	attempts atomic.Int64
+}
+
+// RoundTrip fails the first attempt and answers the others.
+func (tr *failedWriteTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Body != nil {
+		_ = r.Body.Close()
+	}
+	if tr.attempts.Add(1) == 1 {
+		err := errors.New("write tcp: broken pipe")
+		httptrace.ContextClientTrace(r.Context()).WroteRequest(httptrace.WroteRequestInfo{Err: err})
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{}`)),
+		Request:    r,
+	}, nil
+}
+
+// A create whose write failed never reached the server whole: it is
+// replayed, unlike a create that was written before the connection broke.
+func TestACreateWhoseWriteFailedIsReplayed(t *testing.T) {
+	t.Parallel()
+	transport := &failedWriteTransport{}
+	c := New(Config{BaseURL: "https://api.example", HTTPClient: &http.Client{Transport: transport}, Retry: fastRetry})
+
+	err := c.do(context.Background(), call{method: http.MethodPost, path: "/v1/libraries", body: map[string]any{}, audience: workspaceKey}, nil)
+	if err != nil {
+		t.Errorf("err = %v, want the 201 of the replay", err)
+	}
+	if got := transport.attempts.Load(); got != 2 {
+		t.Errorf("%d attempts, want 2", got)
+	}
 }
 
 // lateTraceTransport answers at once and reports the end of the write
@@ -194,6 +283,8 @@ type lateTraceTransport struct {
 	reported chan struct{}
 }
 
+// RoundTrip answers 413 at once, then closes the body and calls WroteRequest
+// from a goroutine of its own.
 func (tr lateTraceTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	trace := httptrace.ContextClientTrace(r.Context())
 	go func() {
