@@ -19,9 +19,14 @@ jobs:
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
+          # raw.githubusercontent.com, go.dev, dl.google.com: setup-go's
+          # fallback hosts, in every job of this file (govulncheck.yml
+          # explains them).
           allowed-endpoints: >
             api.github.com:443
+            dl.google.com:443
             github.com:443
+            go.dev:443
             proxy.golang.org:443
             raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
@@ -87,8 +92,11 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             checkpoint-api.hashicorp.com:443
+            dl.google.com:443
             github.com:443
+            go.dev:443
             proxy.golang.org:443
+            raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
             releases.hashicorp.com:443
             storage.googleapis.com:443
@@ -125,8 +133,11 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             checkpoint-api.hashicorp.com:443
+            dl.google.com:443
             github.com:443
+            go.dev:443
             proxy.golang.org:443
+            raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
             releases.hashicorp.com:443
             storage.googleapis.com:443
@@ -141,8 +152,11 @@ jobs:
 
       # resource.UnitTest runs the Terraform CLI against an httptest fake of
       # the API. The wrapper would interfere with terraform-exec's output.
+      # terraform_version is the one of mise.toml, so that CI runs the
+      # Terraform contributors run; Renovate's github-actions manager bumps it.
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          terraform_version: 1.17.1
           terraform_wrapper: false
 
       - name: Build
@@ -176,8 +190,11 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             checkpoint-api.hashicorp.com:443
+            dl.google.com:443
             github.com:443
+            go.dev:443
             proxy.golang.org:443
+            raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
             releases.hashicorp.com:443
             storage.googleapis.com:443
@@ -190,7 +207,12 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      # tfplugindocs runs Terraform through terraform-exec, as the tests do:
+      # no wrapper. terraform_version as in the test job.
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.1
+          terraform_wrapper: false
 
       - name: Run generate
         run: make generate
@@ -228,8 +250,11 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             api.github.com:443
+            dl.google.com:443
             github.com:443
+            go.dev:443
             proxy.golang.org:443
+            raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
             storage.googleapis.com:443
 
