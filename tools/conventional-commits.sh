@@ -39,18 +39,52 @@ check() {
 	fi
 }
 
+# read_subject <file> sets subject to the subject git commits from the
+# message file the commit-msg hook gets. git runs the hook before it cleans
+# the message up as commit.cleanup says (git help commit, --cleanup), so this
+# does the same cleanup with git stripspace:
+#
+# - strip removes the comment lines, those of core.commentChar; whitespace,
+#   verbatim and scissors keep them, and the subject skips the blank lines
+#   above it in every mode;
+# - default is strip when an editor opened, whitespace otherwise: git runs the
+#   hook with GIT_EDITOR=: when none opens (-m, -F);
+# - after an editor, git cuts the message at its scissors line (with -v, or
+#   with commit.cleanup=scissors).
+#
+# The --cleanup option of git commit does not reach the hook: this follows
+# commit.cleanup only.
+read_subject() {
+	local file=$1 mode editor=true comment text
+	mode=$(git config commit.cleanup || echo default)
+	if [[ "${GIT_EDITOR:-}" == ":" ]]; then
+		editor=false
+	fi
+	if [[ "${mode}" == default ]]; then
+		mode=whitespace
+		if ${editor}; then mode=strip; fi
+	fi
+	text=$(cat "${file}")
+	if ${editor}; then
+		comment=$(printf 'x\n' | git stripspace --comment-lines)
+		text=$(scissors="${comment%x}------------------------ >8 ------------------------" \
+			awk '$0 == ENVIRON["scissors"] { exit } { print }' <<<"${text}")
+	fi
+	if [[ "${mode}" == strip ]]; then
+		text=$(git stripspace --strip-comments <<<"${text}")
+	else
+		text=$(git stripspace <<<"${text}")
+	fi
+	subject=${text%%$'\n'*}
+}
+
 case "${1:-}" in
 title)
 	check "PR title" "${TITLE:?TITLE is not set}"
 	;;
 message)
-	file=${2:?usage: $0 message <file>}
-	# In the editor, the hook gets the message before git cleans it up: with
-	# its comment lines, which start with core.commentChar, and any blank line
-	# above the subject. git stripspace cleans it as git commit then does, so
-	# that its first line is the subject of the commit.
-	message=$(git stripspace --strip-comments <"${file}")
-	check "Commit message" "${message%%$'\n'*}"
+	read_subject "${2:?usage: $0 message <file>}"
+	check "Commit message" "${subject}"
 	;;
 range)
 	range=${2:?usage: $0 range <base>..<head>}

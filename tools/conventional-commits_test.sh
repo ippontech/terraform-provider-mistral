@@ -4,12 +4,14 @@
 # the check must accept it.
 set -uo pipefail
 
-script="$(dirname "$0")/conventional-commits.sh"
+script=$(realpath "$(dirname "$0")/conventional-commits.sh")
 status=0
 
-# The message mode reads core.commentChar: the cases must not depend on the
-# user's or the system's git configuration.
+# The message mode reads core.commentChar, commit.cleanup and GIT_EDITOR: the
+# cases must not depend on the user's or the system's git configuration, nor
+# on the editor of the environment. Each case sets what it needs.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GIT_EDITOR
 
 # expect <accept|reject> <title>
 expect() {
@@ -35,18 +37,27 @@ expect reject 'feat!:drop an attribute'
 expect reject 'fixup! feat: add the agent resource'
 
 # The message mode, as the commit-msg hook calls it, checks the subject git
-# will commit: it ignores comment lines, those of core.commentChar included,
-# and blank lines above the subject.
+# will commit: after an editor, it ignores comment lines, those of
+# core.commentChar included, blank lines above the subject and what follows
+# the scissors line; it keeps the comment lines where commit.cleanup or the
+# absence of an editor (GIT_EDITOR=:) keeps them.
 tmp=$(mktemp)
-trap 'rm -f "${tmp}"' EXIT
+# Outside any repository, so that the configuration of the checkout, such as
+# its core.commentChar, does not reach the cases.
+outside=$(mktemp -d)
+trap 'rm -f "${tmp}"; rm -rf "${outside}"' EXIT
 
 # expect_message <accept|reject> <case> <line>... (the lines of the message
-# file; GIT_CONFIG_* in the environment reach the script)
+# file; GIT_CONFIG_* and GIT_EDITOR in the environment reach the script)
 expect_message() {
 	local want=$1 label=$2 got
 	shift 2
 	printf '%s\n' "$@" >"${tmp}"
-	if "${script}" message "${tmp}" >/dev/null 2>&1; then got=accept; else got=reject; fi
+	if (cd "${outside}" && GIT_CEILING_DIRECTORIES=$(dirname "${outside}") "${script}" message "${tmp}") >/dev/null 2>&1; then
+		got=accept
+	else
+		got=reject
+	fi
 	if [[ "${got}" != "${want}" ]]; then
 		echo "FAIL: message mode, ${label}: got ${got}, want ${want}"
 		status=1
@@ -62,6 +73,22 @@ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.commentChar GIT_CONFIG_VALUE_0=';' \
 	expect_message accept 'core.commentChar ;' '; type(scope): subject' 'docs: explain the import ID' '' '; Please enter the commit message'
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.commentChar GIT_CONFIG_VALUE_0=';' \
 	expect_message reject 'core.commentChar ;, a # line is the subject' '#42 explain the import ID' 'docs: explain the import ID'
+
+# commit.cleanup, and an editor or not.
+readonly cut='# ------------------------ >8 ------------------------'
+expect_message reject 'below the scissors line' '' "${cut}" '# Do not modify or remove the line above.' 'feat: below the cut'
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.commentChar GIT_CONFIG_VALUE_0=';' \
+	expect_message reject 'below the scissors line of core.commentChar ;' '' "${cut/#\#/;}" 'feat: below the cut'
+GIT_EDITOR=: expect_message reject 'no editor: a # line is the subject' '#42 explain the import ID' '' 'docs: explain the import ID'
+GIT_EDITOR=: expect_message accept 'no editor: a valid subject' 'docs: explain the import ID' '' 'The body.'
+for mode in whitespace verbatim scissors; do
+	GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.cleanup GIT_CONFIG_VALUE_0=${mode} \
+		expect_message reject "commit.cleanup=${mode}: a # line is the subject" '#42 explain the import ID' 'docs: explain the import ID'
+	GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.cleanup GIT_CONFIG_VALUE_0=${mode} \
+		expect_message accept "commit.cleanup=${mode}: a blank line above the subject" '' 'docs: explain the import ID' '' "${cut}" '# Changes to be committed:'
+done
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.cleanup GIT_CONFIG_VALUE_0=strip \
+	expect_message accept 'commit.cleanup=strip: a comment above the subject' '# type(scope): subject' 'docs: explain the import ID'
 
 # The range mode, on a scratch repository: a merge commit and a bad subject
 # fail, a linear range of valid commits passes.
