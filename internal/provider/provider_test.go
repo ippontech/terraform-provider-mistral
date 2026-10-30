@@ -201,6 +201,7 @@ func TestConfigureValidatesServerURL(t *testing.T) {
 		"http on 127.0.0.1":    {url: "http://127.0.0.1:8080"},
 		"http on ::1":          {url: "http://[::1]:8080"},
 		"http elsewhere":       {url: "http://api.mistral.ai", wantErr: "plain HTTP"},
+		"http on another IP":   {url: "http://10.0.0.1:8080", wantErr: "plain HTTP"},
 		"relative":             {url: "api.mistral.ai", wantErr: "not an absolute URL"},
 		"other scheme":         {url: "ftp://api.mistral.ai", wantErr: "must use https"},
 		"query":                {url: "https://api.mistral.ai?x=1", wantErr: "query or a fragment"},
