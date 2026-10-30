@@ -43,7 +43,7 @@ The release job holds the signing key. It follows the rules for privileged jobs 
 
 1. The secrets live in the protected `release` environment, not in repository secrets: `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, for GoReleaser.
 2. A ruleset protects the version tags (`.github/rulesets/version-tags.json`): only repository admins create them, and nobody updates or deletes them.
-3. The release job refuses a tag whose commit is not on `main`.
+3. The release job refuses a tag whose commit is not on `main`, and stops before publishing anything if the imported key is not `C4C6311F36624DB7`, the key both registries know for the `ippontech` namespace (*Check the signing key*): the version tag cannot be deleted, but with no GitHub release created yet, the failed jobs run again on the same tag once the secret is fixed. Moving the namespace to another key means registering it in both registries first, then changing the fingerprint of that step in a pull request.
 4. No cache is restored or saved in the job that signs (`cache: false`). A tag run can restore the caches of `main`, so a cache written by any job on `main` could otherwise run code there. A pull request's cache is not the risk: only that pull request can restore it.
 5. Every checkout uses `persist-credentials: false`, and the modules are verified against `go.sum` before the build.
 6. A human reviews every bump of the release tooling (GoReleaser, the GPG import action). Renovate labels these pull requests `release-tooling` and never merges them automatically.

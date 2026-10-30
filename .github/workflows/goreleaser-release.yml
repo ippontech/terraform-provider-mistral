@@ -143,6 +143,24 @@ jobs:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
+      # The registries check each release against the key registered for the
+      # ippontech namespace: C4C6311F36624DB7, on the Terraform Registry since
+      # 2026-04-10 and on the OpenTofu Registry since 2026-10-30. Stop before
+      # anything is published if the secret holds another key: the version
+      # tag cannot be deleted, but with no GitHub release created yet, the
+      # job can run again on the same tag once the secret is fixed. When the
+      # namespace moves to another key, change this fingerprint in a pull
+      # request, after the registries know the new key.
+      - name: Check the signing key
+        env:
+          IMPORTED_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          NAMESPACE_FINGERPRINT: CE0E4F5728703F5F413818AEC4C6311F36624DB7
+        run: |
+          if [[ "${IMPORTED_FINGERPRINT^^}" != "${NAMESPACE_FINGERPRINT}" ]]; then
+            echo "::error title=Release::GPG_PRIVATE_KEY holds the key '${IMPORTED_FINGERPRINT}', not ${NAMESPACE_FINGERPRINT}, the key the registries know for the ippontech namespace: fix the secret of the release environment, then rerun the failed jobs."
+            exit 1
+          fi
+
       - name: Release
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
