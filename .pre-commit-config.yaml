@@ -38,8 +38,9 @@ repos:
         entry: mise exec -- poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
         pass_filenames: false
         always_run: true
-      # The audits of the zizmor CI job, offline: the online ones (impostor
-      # commits behind a pinned SHA) need a GitHub token and run in CI only.
+      # The audits of the zizmor CI job, offline: those that query the GitHub
+      # API (impostor-commit, known-vulnerable-actions, ref-confusion) need a
+      # token and run in CI only.
       - id: zizmor
         name: zizmor
         language: system

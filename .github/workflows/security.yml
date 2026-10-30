@@ -135,9 +135,13 @@ jobs:
           "${install_dir}/zizmor" --version
 
       # What actionlint and poutine leave out: a cache next to release
-      # tooling, an over-broad App token, credentials kept by a checkout, and,
-      # through the API with this job's read-only token, a pinned SHA that is
-      # not a commit of the action's own repository.
+      # tooling, an over-broad App token, credentials kept by a checkout, and
+      # the audits that query the GitHub API, with this job's read-only token
+      # (those https://docs.zizmor.sh/audits/ marks as not working offline):
+      # a pinned SHA that is not a commit of the action's own repository
+      # (impostor-commit), an action version with a GitHub security advisory
+      # (known-vulnerable-actions), and a ref that is both a branch and a tag
+      # (ref-confusion).
       - name: Run zizmor
         env:
           GH_TOKEN: ${{ github.token }}
