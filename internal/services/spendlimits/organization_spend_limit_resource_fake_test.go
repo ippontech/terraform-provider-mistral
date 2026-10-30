@@ -532,10 +532,10 @@ func (v limitValues) config() tftypes.Value {
 	})
 }
 
-// applyUpdate configures the provider of the fake with the Admin API key and
-// sends it the ApplyResourceChange of an update of the spend limit from prior
-// to planned, as Terraform does. It returns the new state and the
-// diagnostics of the answer.
+// applyUpdate configures the provider of the fake with the dummy keys of
+// sdktest and sends it the ApplyResourceChange of an update of the spend
+// limit from prior to planned, as Terraform does. It returns the new state
+// and the diagnostics of the answer.
 func applyUpdate(t *testing.T, f *fake, prior, planned limitValues) (tftypes.Value, []*tfprotov6.Diagnostic) {
 	t.Helper()
 	ctx := context.Background()
@@ -555,6 +555,9 @@ func applyUpdate(t *testing.T, f *fake, prior, planned limitValues) (tftypes.Val
 	for name, typ := range providerType.AttributeTypes {
 		settings[name] = tftypes.NewValue(typ, nil)
 	}
+	// Both keys, as providertest.ProviderConfig sets them: a null key falls
+	// back to the environment of the developer or of CI.
+	settings["api_key"] = tftypes.NewValue(tftypes.String, sdktest.TestAPIKey)
 	settings["admin_api_key"] = tftypes.NewValue(tftypes.String, sdktest.TestAdminKey)
 	configured, err := server.ConfigureProvider(ctx, &tfprotov6.ConfigureProviderRequest{
 		Config: dynamicValue(t, tftypes.NewValue(providerType, settings)),
