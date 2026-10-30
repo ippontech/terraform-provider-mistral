@@ -140,7 +140,9 @@ func (r *OrganizationSpendLimitResource) Configure(_ context.Context, req resour
 // limit, so there is nothing to create: the create refuses to overwrite a
 // limit set outside Terraform with another value, and points to an import
 // instead (CLAUDE.md, "No silent adoption"). A limit equal to the plan, or
-// no limit at all, is taken as is: overwriting it loses nothing.
+// no limit at all, is taken as is: overwriting it loses nothing. When both
+// the organization and the plan have no limit, and the organization holds
+// no whole amount to send with the flag, the create writes nothing.
 func (r *OrganizationSpendLimitResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan spendLimitModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -166,8 +168,16 @@ func (r *OrganizationSpendLimitResource) Create(ctx context.Context, req resourc
 		return
 	}
 	// usage_limit may still hold the last limit when the organization has no
-	// limit: that is the amount to send with no_monthly_limit.
+	// limit: that is the amount to send with no_monthly_limit. limitAmount
+	// gives null when it holds none, and for a fractional one, whose error
+	// only matters with the flag off, where spendLimitState refused it above.
 	keep, _ := limitAmount(current.Limits.Completion)
+	if plan.NoMonthlyLimit.ValueBool() && existing.NoMonthlyLimit.ValueBool() && keep.IsNull() {
+		// The organization already has no limit, as planned, and the POST
+		// would need an amount the organization does not hold (see set).
+		resp.Diagnostics.Append(writeState(ctx, existing, &resp.State, resp.Identity)...)
+		return
+	}
 	r.set(ctx, plan, keep, &resp.State, resp.Identity, &resp.Diagnostics)
 }
 
@@ -234,10 +244,19 @@ func (r *OrganizationSpendLimitResource) ImportState(ctx context.Context, req re
 // organization has now: the specification requires amount even when
 // no_monthly_limit removes the limit, and sending the current limit rather
 // than 0 keeps the organization usable if the API ever reads the amount
-// despite the flag.
+// despite the flag. Without a limit to keep, set sends nothing and fails:
+// any other amount would be made up, and 0 could suspend the organization.
 func (r *OrganizationSpendLimitResource) set(ctx context.Context, plan spendLimitModel, keep types.Int64, state *tfsdk.State, identity *tfsdk.ResourceIdentity, diags *diag.Diagnostics) {
 	body := client.OrganizationSpendLimitRequest{Amount: plan.Amount.ValueInt64(), NoMonthlyLimit: plan.NoMonthlyLimit.ValueBool()}
 	if body.NoMonthlyLimit {
+		if keep.IsNull() {
+			diags.AddAttributeError(path.Root("no_monthly_limit"), "No amount to send with no_monthly_limit",
+				"The API requires an amount with no_monthly_limit = true, and the provider sends the current limit of the organization, never 0: "+
+					"if the API read the amount despite the flag, 0 could suspend the organization's API access. "+
+					"The organization has no whole monthly limit to send with it. "+
+					"Set amount to a whole limit and apply, then apply no_monthly_limit = true.")
+			return
+		}
 		body.Amount = keep.ValueInt64()
 	}
 	limits, err := r.client.SetOrganizationSpendLimit(ctx, body)

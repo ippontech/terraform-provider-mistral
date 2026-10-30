@@ -14,7 +14,7 @@
 
 - **Schema.** `amount` (Int64, optional, at least 0) or `no_monthly_limit = true`, exactly one (`ValidateConfig`); `no_monthly_limit` defaults to `false`. `currency` is computed. The usage fields are not mapped: they change all the time and nothing consumes them.
 - **Exact amounts.** `usage_limit` is decoded as a `json.Number`. A whole value, `500` or `500.0`, maps to `amount`; a fractional one is an error on the read rather than a rounded value, since the integer `amount` of the `POST` cannot produce it.
-- **The amount with `no_monthly_limit`.** The `POST` requires `amount` even when the flag removes the limit. The provider sends the current limit, from `usage_limit` on create and from the state on update, never `0`: if the API ever read the amount despite the flag, `0` would suspend the organization.
+- **The amount with `no_monthly_limit`.** The `POST` requires `amount` even when the flag removes the limit. The provider sends the current limit, from `usage_limit` on create and from the state on update, never `0`: if the API ever read the amount despite the flag, `0` would suspend the organization. When there is no whole amount to send (`usage_limit` null, or fractional with the flag on), the create of `no_monthly_limit = true` on an organization that already has no limit writes nothing and takes the limit as is; any other case (`no_monthly_limit` false without a `usage_limit`, on create or on update) fails before the `POST` and asks for a whole `amount` first. `TestOrganizationSpendLimitResourceTakesNoLimitWithoutAnAmount` and `TestOrganizationSpendLimitResourceNeverSendsAZeroAmount` pin both.
 - **No silent adoption, for a singleton.** The limit always exists, so the rule reads as "never overwrite a value set outside Terraform": the create reads the limit first and fails with the `import` block (`id = "organization"`) when the organization has a limit different from the plan. No limit, or the same limit, is taken as is: writing it loses nothing.
 - **Destroy leaves the limit.** `Delete` calls nothing and warns. The alternative, `no_monthly_limit = true`, would lift a cost cap as a side effect of a destroy, and the limit from before Terraform is unknown, so it cannot be restored. The page says to apply `no_monthly_limit = true` first to remove the limit.
 - **No retry on 5xx.** The `POST` sets a value and would be safe to replay, but the API does not document it as idempotent (CLAUDE.md, "Retries").
@@ -24,7 +24,7 @@
 
 - What `usage_limit` holds when `no_monthly_limit` is true (the fake keeps the last amount; the provider ignores it), and whether the `POST` with the flag keeps or replaces that amount.
 - Whether `usage_limit` comes back as `500` or `500.0` (both map), and whether a limit set in the Admin Panel can be fractional.
-- What a new Enterprise organization has: no limit, or a default limit, which would make the first create fail with the import block.
+- What a new Enterprise organization has: no limit, or a default limit, which would make the first create fail with the import block. Whether it can answer `no_monthly_limit: false` without a `usage_limit`, for which removing the limit fails until a whole `amount` is set.
 - The currency code format (`EUR`, `USD`).
 
 ## Tests

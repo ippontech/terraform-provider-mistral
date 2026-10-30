@@ -169,6 +169,72 @@ func TestOrganizationSpendLimitResourceKeepsNoLimit(t *testing.T) {
 	f.AssertJSONBodies(routeSetLimit, `{"amount": 2000, "no_monthly_limit": true}`)
 }
 
+// An organization with no limit and no whole amount in usage_limit, none
+// or a fractional one, keeps no limit without a POST: the POST requires an
+// amount, the organization holds none to send, and 0 could suspend it.
+func TestOrganizationSpendLimitResourceTakesNoLimitWithoutAnAmount(t *testing.T) {
+	t.Parallel()
+
+	for name, usageLimit := range map[string]any{"no usage_limit": nil, "fractional usage_limit": 99.5} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFake(t)
+			f.seed(true, usageLimit)
+
+			resource.UnitTest(t, resource.TestCase{
+				ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+				Steps: []resource.TestStep{{
+					Config:            limitConfig(`  no_monthly_limit = true`),
+					ConfigPlanChecks:  providertest.ExpectAction(limitAddr, plancheck.ResourceActionCreate),
+					ConfigStateChecks: limitChecks(knownvalue.Null(), knownvalue.Bool(true)),
+				}},
+			})
+			f.AssertCalled(routeSetLimit, 0)
+		})
+	}
+}
+
+// An organization whose no_monthly_limit is false without a usage_limit has
+// no amount to send with the flag: removing the limit fails, on create and
+// on update, rather than sending 0, until a whole limit is set.
+func TestOrganizationSpendLimitResourceNeverSendsAZeroAmount(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	noAmount := regexp.MustCompile(`No\s+amount\s+to\s+send\s+with\s+no_monthly_limit(.|\n)*never\s+0`)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				PreConfig:   func() { f.seed(false, nil) },
+				Config:      limitConfig(`  no_monthly_limit = true`),
+				ExpectError: noAmount,
+			},
+			{
+				Config:            limitConfig(`  amount = 500`),
+				ConfigStateChecks: limitChecks(knownvalue.Int64Exact(500), knownvalue.Bool(false)),
+			},
+			{
+				// The refresh reads the limit without an amount.
+				PreConfig:   func() { f.seed(false, nil) },
+				Config:      limitConfig(`  no_monthly_limit = true`),
+				ExpectError: noAmount,
+			},
+			{
+				Config: limitConfig(`  amount = 500`),
+			},
+			{
+				Config:            limitConfig(`  no_monthly_limit = true`),
+				ConfigStateChecks: limitChecks(knownvalue.Null(), knownvalue.Bool(true)),
+			},
+		},
+	})
+	f.AssertJSONBodies(routeSetLimit,
+		`{"amount": 500, "no_monthly_limit": false}`,
+		`{"amount": 500, "no_monthly_limit": false}`,
+		`{"amount": 500, "no_monthly_limit": true}`)
+}
+
 // A limit changed in the Admin Panel plans an update that writes the
 // configured limit back.
 func TestOrganizationSpendLimitResourceRevertsALimitChangedOutsideTerraform(t *testing.T) {
@@ -305,6 +371,29 @@ resource "mistral_organization_spend_limit" "this" {
 			ConfigStateChecks: []statecheck.StateCheck{
 				statecheck.ExpectKnownValue(limitAddr, tfjsonpath.New("amount"), knownvalue.Int64Exact(1200)),
 			},
+		}},
+	})
+}
+
+// A no_monthly_limit unknown at plan time is checked at apply time, not
+// taken for false: the plan does not ask for an amount.
+func TestOrganizationSpendLimitResourceAcceptsAFlagUnknownAtPlanTime(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{{
+			Config: providertest.ProviderConfig() + `
+resource "terraform_data" "uncapped" {
+  input = true
+}
+
+resource "mistral_organization_spend_limit" "this" {
+  no_monthly_limit = terraform_data.uncapped.output
+}
+`,
+			ConfigStateChecks: limitChecks(knownvalue.Null(), knownvalue.Bool(true)),
 		}},
 	})
 }
