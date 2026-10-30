@@ -208,20 +208,35 @@ func TestAServerThatNeverAnswersTimesOut(t *testing.T) {
 
 // An upload is not bounded by the header timeout, which a proxy that
 // buffers the whole upload would make count its own transfer, while a create
-// with a JSON body that answers as late is cut and, being a create, not
+// with a JSON body answered later still is cut and, being a create, not
 // replayed.
 func TestAnUploadIsNotCutByTheHeaderTimeout(t *testing.T) {
 	t.Parallel()
+	const headerTimeout = 20 * time.Millisecond
 	srv := sdktest.NewServer(t)
-	answerLate := func(body map[string]any) http.HandlerFunc {
-		return func(w http.ResponseWriter, _ *http.Request) {
-			time.Sleep(100 * time.Millisecond) // five times the header timeout below
-			sdktest.WriteJSON(w, http.StatusCreated, body)
+	// answerAfter answers after delay, counted from when the handler runs,
+	// so never before the request is written, unless the client gives up
+	// first. The upload's ten times the header timeout is late enough for a
+	// bounded upload to fail; the create's 10 s is a margin no delayed timer
+	// on a loaded machine reaches, and the handler returns as soon as the
+	// client closes the connection, so the test does not wait for it.
+	answerAfter := func(delay time.Duration, body map[string]any) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(delay):
+				sdktest.WriteJSON(w, http.StatusCreated, body)
+			}
 		}
 	}
-	srv.Handle("POST /v1/libraries/{library_id}/documents", answerLate(document))
-	srv.Handle("POST /v1/libraries", answerLate(library))
-	c := newClient(Config{BaseURL: srv.URL, Retry: fastRetry}, 20*time.Millisecond)
+	srv.Handle("POST /v1/libraries/{library_id}/documents", answerAfter(10*headerTimeout, document))
+	srv.Handle("POST /v1/libraries", answerAfter(10*time.Second, library))
+	c := newClient(Config{BaseURL: srv.URL, Retry: fastRetry}, headerTimeout)
+	// Attempts are counted at the client's transports: the create times out
+	// and returns before the fake has necessarily run its handler, so the
+	// fake's own count can still be 0 when the test checks it.
+	calls, uploads := &countingTransport{next: c.http.Transport}, &countingTransport{next: c.upload.Transport}
+	c.http.Transport, c.upload.Transport = calls, uploads
 	ctx := context.Background()
 
 	if _, created, err := c.UploadDocument(ctx, "lib_1", textFile("a.txt", "a")); err != nil || !created {
@@ -231,8 +246,12 @@ func TestAnUploadIsNotCutByTheHeaderTimeout(t *testing.T) {
 	if netErr, ok := errors.AsType[net.Error](err); !ok || !netErr.Timeout() {
 		t.Errorf("CreateLibrary err = %v, want a timeout", err)
 	}
-	srv.AssertCalled("POST /v1/libraries/{library_id}/documents", 1)
-	srv.AssertCalled("POST /v1/libraries", 1)
+	if got := uploads.n.Load(); got != 1 {
+		t.Errorf("%d upload attempts, want 1", got)
+	}
+	if got := calls.n.Load(); got != 1 {
+		t.Errorf("%d create attempts, want 1: a create that timed out is not replayed", got)
+	}
 }
 
 // failedWriteTransport fails its first attempt as a broken connection does:
