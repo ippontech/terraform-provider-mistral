@@ -74,6 +74,11 @@ release:
 # regexp is matched against the commit subject, without its SHA, and anchored
 # at its start: unanchored, a type inside a word of the description (latest:,
 # prefix:, defeat:) would drop the commit or file it under the wrong group.
+# A revert, GitHub's `Revert "<subject>"` or the revert type, is listed under
+# Reverts whatever it reverts: it undoes a change, so it is neither a feature
+# nor a fix, and the maintainer judges what it means for the next version. A
+# revert of a chore, ci, test or style commit is left out like that commit,
+# nested reverts included; a "!" after revert makes it a breaking change.
 changelog:
   use: git
   sort: asc
@@ -91,8 +96,11 @@ changelog:
     - title: Performance
       regexp: '^perf(\([^)]+\))??:.+$'
       order: 3
+    - title: Reverts
+      regexp: '^(Revert ".+"|revert(\([^)]+\))??:.+)$'
+      order: 4
     - title: Other changes
       order: 999
   filters:
     exclude:
-      - '^(chore|ci|test|style)(\([^)]+\))??:.+$'
+      - '^(Revert ")*(chore|ci|test|style)(\([^)]+\))??:.+$'
