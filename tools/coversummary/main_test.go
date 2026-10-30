@@ -26,6 +26,7 @@ example.com/m/internal/services/a/a_data_source.go:5.1,6.2 4 0
 // TestParseProfile checks the statements counted per file, a block listed
 // twice counting once.
 func TestParseProfile(t *testing.T) {
+	t.Parallel()
 	files, err := parseProfile(strings.NewReader(profile))
 	if err != nil {
 		t.Fatal(err)
@@ -52,6 +53,7 @@ func TestParseProfile(t *testing.T) {
 
 // TestParseProfileErrors checks that a malformed profile is refused.
 func TestParseProfileErrors(t *testing.T) {
+	t.Parallel()
 	for name, input := range map[string]string{
 		"empty":      "",
 		"no mode":    "example.com/m/a.go:1.1,2.2 1 1\n",
@@ -66,6 +68,7 @@ func TestParseProfileErrors(t *testing.T) {
 		"backwards":  "mode: set\nexample.com/m/a.go:5.1,2.2 1 1\n",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := parseProfile(strings.NewReader(input)); err == nil {
 				t.Error("expected an error")
 			}
@@ -76,6 +79,7 @@ func TestParseProfileErrors(t *testing.T) {
 // TestWriteSummary checks the total and the files -match selects, least
 // covered first.
 func TestWriteSummary(t *testing.T) {
+	t.Parallel()
 	files, err := parseProfile(strings.NewReader(profile))
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +105,7 @@ func TestWriteSummary(t *testing.T) {
 
 // TestParseProfileSkipsBlankLines checks that blank lines are ignored.
 func TestParseProfileSkipsBlankLines(t *testing.T) {
+	t.Parallel()
 	files, err := parseProfile(strings.NewReader("mode: set\n\nexample.com/m/a.go:1.1,2.2 2 1\n  \nexample.com/m/a.go:3.1,4.2 1 0\n\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +118,7 @@ func TestParseProfileSkipsBlankLines(t *testing.T) {
 // TestParseProfileErrorMessages checks that a parse error says the line and
 // the problem, and that a read error comes through.
 func TestParseProfileErrorMessages(t *testing.T) {
+	t.Parallel()
 	for input, want := range map[string]string{
 		"":                                 "empty coverage profile",
 		"example.com/m/a.go:1.1,2.2 1 1\n": "not a coverage profile: missing mode line",
