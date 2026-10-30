@@ -51,11 +51,11 @@ func TestProviderFactoriesIgnoreTheEnvironment(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      "provider \"mistral\" {}\n\ndata \"mistral_models\" \"all\" {}\n",
-				ExpectError: regexp.MustCompile(`Missing\s+Mistral\s+credential(.|\n)*"api_key"`),
+				ExpectError: regexp.MustCompile(`Missing\s+Mistral\s+credential(.|\n)*"api_key"(.|\n)*ignores\s+the\s+environment`),
 			},
 			{
 				Config:      "provider \"mistral\" {}\n\ndata \"mistral_workspaces\" \"all\" {}\n",
-				ExpectError: regexp.MustCompile(`Missing\s+Mistral\s+credential(.|\n)*"admin_api_key"`),
+				ExpectError: regexp.MustCompile(`Missing\s+Mistral\s+credential(.|\n)*"admin_api_key"(.|\n)*ignores\s+the\s+environment`),
 			},
 		},
 	})

@@ -42,6 +42,24 @@ func TestCredentialNamesWhatToSet(t *testing.T) {
 	}
 }
 
+// A provider that ignores the environment says so, rather than telling the
+// reader to set a variable it would not read.
+func TestCredentialSaysTheEnvironmentIsIgnored(t *testing.T) {
+	_, diags := (&ProviderData{EnvironmentIgnored: true}).Credential(Admin)
+	if !diags.HasError() {
+		t.Fatal("Credential without a key returned no error")
+	}
+	detail := diags.Errors()[0].Detail()
+	for _, want := range []string{`"admin_api_key"`, "ignores the environment", "MISTRAL_ADMIN_API_KEY is not read"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail %q does not contain %q", detail, want)
+		}
+	}
+	if strings.Contains(detail, "neither is set") {
+		t.Errorf("detail %q blames the environment variable", detail)
+	}
+}
+
 func TestAudienceString(t *testing.T) {
 	if got := Audience(0).String(); got != "Audience(0)" {
 		t.Errorf("Audience(0).String() = %q", got)

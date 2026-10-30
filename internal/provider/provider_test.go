@@ -92,6 +92,9 @@ func TestConfigureWithoutCredentialSucceeds(t *testing.T) {
 	if pd.ServerURL != DefaultServerURL {
 		t.Errorf("ServerURL = %q, want %q", pd.ServerURL, DefaultServerURL)
 	}
+	if pd.EnvironmentIgnored {
+		t.Error("EnvironmentIgnored is set without WithoutEnvironment")
+	}
 	if pd.UserAgent != "terraform-provider-mistral/test" {
 		t.Errorf("UserAgent = %q", pd.UserAgent)
 	}
@@ -144,8 +147,8 @@ func TestWithoutEnvironmentIgnoresTheEnvironment(t *testing.T) {
 	t.Setenv(envServerURL, "https://env.example.com")
 
 	pd := providerData(t, configure(t, nil, WithoutEnvironment()))
-	if pd.APIKey != "" || pd.AdminAPIKey != "" || pd.ServerURL != DefaultServerURL {
-		t.Errorf("got %+v, want no key and the default server URL", *pd)
+	if pd.APIKey != "" || pd.AdminAPIKey != "" || pd.ServerURL != DefaultServerURL || !pd.EnvironmentIgnored {
+		t.Errorf("got %+v, want no key, the default server URL, and the environment marked as ignored", *pd)
 	}
 
 	pd = providerData(t, configure(t, map[string]tftypes.Value{"api_key": str("config-key")}, WithoutEnvironment()))

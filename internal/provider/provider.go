@@ -171,6 +171,8 @@ func (p *MistralProvider) Configure(ctx context.Context, req provider.ConfigureR
 		APIKey:      p.resolve(data.APIKey, envAPIKey, ""),
 		AdminAPIKey: p.resolve(data.AdminAPIKey, envAdminAPIKey, ""),
 		UserAgent:   "terraform-provider-mistral/" + p.version,
+
+		EnvironmentIgnored: p.ignoreEnvironment,
 	}
 	pd.Client = client.New(client.Config{
 		BaseURL:     pd.ServerURL,

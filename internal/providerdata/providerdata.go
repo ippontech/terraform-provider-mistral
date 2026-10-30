@@ -63,6 +63,10 @@ type ProviderData struct {
 	AdminAPIKey string
 	// UserAgent is sent on every request.
 	UserAgent string
+	// EnvironmentIgnored is true when Configure did not read the environment
+	// variables (provider.WithoutEnvironment, set for the tests against the
+	// fake API), so that a missing credential is not blamed on them.
+	EnvironmentIgnored bool
 	// Client calls the API with both keys; each typed call picks the key of
 	// its endpoint.
 	Client *client.Client
@@ -81,7 +85,16 @@ func (pd *ProviderData) Credential(a Audience) (string, diag.Diagnostics) {
 	case Admin:
 		value = pd.AdminAPIKey
 	}
-	if value == "" {
+	switch {
+	case value != "":
+	case pd.EnvironmentIgnored:
+		diags.AddError(
+			"Missing Mistral credential",
+			fmt.Sprintf("This resource or data source calls an endpoint that needs the %q provider argument, which is not set. "+
+				"This provider ignores the environment, as the providers of the tests against the fake API do, "+
+				"so %s is not read even when it is set.", a.String(), a.envVar()),
+		)
+	default:
 		diags.AddError(
 			"Missing Mistral credential",
 			fmt.Sprintf("This resource or data source calls an endpoint that needs the %q provider argument, "+

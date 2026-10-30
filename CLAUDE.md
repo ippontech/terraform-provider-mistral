@@ -82,7 +82,7 @@ The code is read more often than it is written, by people and by agents that hav
 
 ## Testing
 
-Unit tests need no credential and no network, and never read one from the environment: `make test` runs them with dummy `MISTRAL_API_KEY` and `MISTRAL_ADMIN_API_KEY`. Acceptance tests (`resource.Test`) need `TF_ACC=1` and real keys, and create real objects. They are named `TestAcc` and a capital letter, the only names `make testacc` runs (`internal/acctest/naming_test.go` checks it).
+Unit tests need no credential and no network, and never read one from the environment: `make test` runs them with dummy `MISTRAL_API_KEY` and `MISTRAL_ADMIN_API_KEY`, and an empty `TF_ACC` so that the live tests skip whatever the shell sets. Acceptance tests (`resource.Test`) need `TF_ACC=1` and real keys, and create real objects. They are named `TestAcc` and a capital letter, the only names `make testacc` runs. `internal/acctest/naming_test.go` checks it for every test that calls `resource.Test`, `resource.ParallelTest` or an `acctest` precheck, itself or through a function of its package (not through a method or a function value).
 
 **The standard for each resource, against the fake API** (`resource.UnitTest`, `internal/sdktest`, `internal/providertest`):
 
