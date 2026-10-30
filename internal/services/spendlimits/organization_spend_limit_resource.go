@@ -198,12 +198,22 @@ func (r *OrganizationSpendLimitResource) Read(ctx context.Context, _ resource.Re
 }
 
 // Update sets the planned limit. The amount in the state is the one to send
-// with no_monthly_limit (see set).
+// with no_monthly_limit (see set). When the state and the plan both have
+// no_monthly_limit, Update writes nothing, like Create: the organization
+// already has what the plan sets, and the state holds no amount to send with
+// the flag (spendLimitState), which set would refuse. Terraform 1.17 does not
+// call Update then, even for a flag unknown at plan time that turns out true:
+// it plans again at apply time and skips a resource whose plan became empty.
+// The check keeps Update right for a client that does call it.
 func (r *OrganizationSpendLimitResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state spendLimitModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.NoMonthlyLimit.ValueBool() && state.NoMonthlyLimit.ValueBool() {
+		resp.Diagnostics.Append(writeState(ctx, state, &resp.State, resp.Identity)...)
 		return
 	}
 	r.set(ctx, plan, state.Amount, &resp.State, resp.Identity, &resp.Diagnostics)

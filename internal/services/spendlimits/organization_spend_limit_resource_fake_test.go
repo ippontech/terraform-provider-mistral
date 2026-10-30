@@ -398,6 +398,40 @@ resource "mistral_organization_spend_limit" "this" {
 	})
 }
 
+// A no_monthly_limit that stays true, but that the plan only learns at
+// apply time, plans an update and sends nothing: the organization already
+// has no limit, and the state holds no amount to send with the flag.
+// Terraform 1.17 plans again at apply time and skips the resource, so
+// Update is not called; TestUpdateKeepsNoLimitWithoutAPost calls it.
+func TestOrganizationSpendLimitResourceKeepsNoLimitLearntAtApplyTime(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config:            limitConfig(`  no_monthly_limit = true`),
+				ConfigStateChecks: limitChecks(knownvalue.Null(), knownvalue.Bool(true)),
+			},
+			{
+				Config: providertest.ProviderConfig() + `
+resource "terraform_data" "uncapped" {
+  input = true
+}
+
+resource "mistral_organization_spend_limit" "this" {
+  no_monthly_limit = terraform_data.uncapped.output
+}
+`,
+				ConfigPlanChecks:  providertest.ExpectAction(limitAddr, plancheck.ResourceActionUpdate),
+				ConfigStateChecks: limitChecks(knownvalue.Null(), knownvalue.Bool(true)),
+			},
+		},
+	})
+	f.AssertCalled(routeSetLimit, 0)
+}
+
 // The import ID is the fixed word organization, and nothing else.
 func TestOrganizationSpendLimitResourceRejectsAnotherImportID(t *testing.T) {
 	t.Parallel()
