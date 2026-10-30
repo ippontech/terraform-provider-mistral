@@ -5,6 +5,12 @@
 # Run by .github/workflows/goreleaser-release.yml; checked on every pull
 # request by goreleaser-check.yml.
 version: 2
+# With a pre-release tag and its stable tag on one commit (v1.0.0-rc.1 promoted
+# as v1.0.0), the stable one sorts first and is the version built: GoReleaser
+# picks the first of the tags on HEAD in version order, where git otherwise
+# sorts v1.0.0-rc.1 above v1.0.0 (git config versionsort.suffix).
+git:
+  prerelease_suffix: "-"
 # No `go mod tidy` hook: a release builds exactly what main holds, which the
 # tidy-check of every pull request already verified.
 builds:
