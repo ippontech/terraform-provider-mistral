@@ -5,7 +5,7 @@ package apikeys
 
 import "time"
 
-// SetClock sets the date expiresBy compares an expiration_date with, for the
+// SetClock sets the date expiresOn compares an expiration_date with, for the
 // tests of the package: TestMain calls it before any test runs.
 func SetClock(at time.Time) {
 	now = func() time.Time { return at }

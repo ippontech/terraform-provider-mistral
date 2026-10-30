@@ -115,7 +115,7 @@ func (r *APIKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				MarkdownDescription: "The date the key should expire, in RFC 3339 date format (`2027-06-30`). When null, the key never expires, " +
 					"unless an expiration policy applies. The state keeps the configured date: `expiration_date` gives the date Mistral set. " +
 					"Changing it replaces the key, except when it is added to a key that has none in the state, as after its create without one " +
-					"or after an import, and whose `expiration_date` is after today (UTC) and on or before it: the apply then records it in place.",
+					"or after an import, and whose `expiration_date` is after today (UTC) and the same date: the apply then records it in place.",
 				PlanModifiers: []planmodifier.String{replaceExpiration()},
 				Validators:    []validator.String{date{}},
 			},
@@ -164,36 +164,36 @@ func replaceUnlessImported() planmodifier.String {
 // cannot change the expiry of a key, with one exception: a date added where
 // the state has none, as for a key created without one or right after an
 // import (expiration is never read back), is recorded in place when the key
-// is still valid and already expires on or before that date (expiresBy). The
-// key then meets the date, a policy may have set its expiry, and a new key
-// would expire no earlier, so a replacement would only cut off the
-// applications that use it. Every other case replaces the key: an added date
-// the key does not meet, whether Terraform created or imported it, and any
-// change of a recorded date, since moving it later is how a key is renewed.
-// The exception does not depend on user_id, which ignore_changes can keep
-// null for good after an import.
+// is still valid and already expires on that very date (expiresOn), as when
+// a policy set it. Any other added date replaces the key, earlier or later:
+// a new key gets min(date, today + the policy's maximum), which can differ
+// from the old key's date once the policy window has moved, so only the
+// replacement tells, the plan shows it, and the state never claims a date
+// the key does not have. Any change of a recorded date replaces the key too:
+// moving it later is how a key is renewed. The exception does not depend on
+// user_id, which ignore_changes can keep null for good after an import.
 func replaceExpiration() planmodifier.String {
 	return stringplanmodifier.RequiresReplaceIf(
 		func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
-			// A date unknown at plan time reads as "", which expiresBy cannot
+			// A date unknown at plan time reads as "", which expiresOn cannot
 			// compare: the key is replaced.
-			resp.RequiresReplace = !req.StateValue.IsNull() || !expiresBy(ctx, req.State, req.PlanValue.ValueString(), &resp.Diagnostics)
+			resp.RequiresReplace = !req.StateValue.IsNull() || !expiresOn(ctx, req.State, req.PlanValue.ValueString(), &resp.Diagnostics)
 		},
-		"Changing the value replaces the key, except for a date added to a key still valid that already expires on or before it, "+
+		"Changing the value replaces the key, except for a date added to a key still valid that already expires on that date, "+
 			"which is recorded in place.",
-		"Changing the value replaces the key, except for a date added to a key still valid that already expires on or before it, "+
+		"Changing the value replaces the key, except for a date added to a key still valid that already expires on that date, "+
 			"which is recorded in place.",
 	)
 }
 
-// now is the clock of expiresBy. The tests of the package set it to the
+// now is the clock of expiresOn. The tests of the package set it to the
 // fake's date (SetClock in export_test.go).
 var now = time.Now
 
-// expiresBy reports whether the key of state is still valid and expires on
-// or before planned, a YYYY-MM-DD date. Still valid means an expiration_date
-// after today in UTC: a key that expires today, or has expired, is replaced,
-// so that the configured date gives a working key. A null expiration_date (a
+// expiresOn reports whether the key of state is still valid and expires on
+// planned, a YYYY-MM-DD date. Still valid means an expiration_date after
+// today in UTC: a key that expires today, or has expired, is replaced, so
+// that the configured date gives a working key. A null expiration_date (a
 // key that never expires), or one dateOf cannot read, reports false, which
 // replaces the key: the safe side.
 //
@@ -205,7 +205,7 @@ var now = time.Now
 // date of the last refresh, kept in the private state, would avoid that, but
 // a saved plan applied days later would then keep an expired key: failing is
 // the safer of the two, and the page says to plan again.
-func expiresBy(ctx context.Context, state tfsdk.State, planned string, diags *diag.Diagnostics) bool {
+func expiresOn(ctx context.Context, state tfsdk.State, planned string, diags *diag.Diagnostics) bool {
 	var current types.String
 	diags.Append(state.GetAttribute(ctx, path.Root("expiration_date"), &current)...)
 	expiry, err := dateOf(current.ValueString())
@@ -213,7 +213,7 @@ func expiresBy(ctx context.Context, state tfsdk.State, planned string, diags *di
 		return false
 	}
 	asked, err := time.Parse(time.DateOnly, planned)
-	return err == nil && expiry.After(utcDate(now())) && !expiry.After(asked)
+	return err == nil && expiry.After(utcDate(now())) && expiry.Equal(asked)
 }
 
 // dateOf reads an expiration_date: a YYYY-MM-DD date, the format of the
@@ -291,9 +291,9 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 }
 
 // Update only records user_id on the first apply after an import, and an
-// expiration added to a key that already expires by then: every other change
-// replaces the key (replaceUnlessImported, replaceExpiration), and the API
-// has no update to call.
+// expiration added to a key that already expires on that date: every other
+// change replaces the key (replaceUnlessImported, replaceExpiration), and the
+// API has no update to call.
 func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state apiKeyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
