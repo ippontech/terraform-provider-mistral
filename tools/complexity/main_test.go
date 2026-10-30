@@ -14,7 +14,9 @@ import (
 )
 
 // gitRepo commits testdata/base on main, then testdata/head on a branch
-// "change" that it leaves checked out, and returns the repository.
+// "change" that it leaves checked out, and returns the repository. It sets
+// environment variables with t.Setenv, so the tests that call it cannot run
+// in parallel.
 func gitRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -38,6 +40,8 @@ func gitRepo(t *testing.T) string {
 	return dir
 }
 
+// runGit runs git in dir with a committer identity, and returns its trimmed
+// output.
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := git(dir, append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
@@ -47,6 +51,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// copyTree copies the files under from to to.
 func copyTree(t *testing.T, from, to string) {
 	t.Helper()
 	err := filepath.WalkDir(from, func(p string, d os.DirEntry, err error) error {
@@ -72,10 +77,13 @@ func copyTree(t *testing.T, from, to string) {
 	}
 }
 
+// fixtureOptions are the options of run on the repository of gitRepo.
 func fixtureOptions(dir, base string) options {
 	return options{base: base, root: dir, limit: fixtureLimit, dirs: []string{"internal/"}, exclude: regexp.MustCompile(defaultExclude)}
 }
 
+// TestRunAgainstGit checks run against main, against HEAD, and with an
+// uncommitted change.
 func TestRunAgainstGit(t *testing.T) {
 	dir := gitRepo(t)
 	mergeBase := runGit(t, dir, "rev-parse", "main")
@@ -121,6 +129,7 @@ func TestRunAgainstGit(t *testing.T) {
 	}
 }
 
+// TestRunInputErrors checks that a -base git refuses is an input error.
 func TestRunInputErrors(t *testing.T) {
 	dir := gitRepo(t)
 	for _, base := range []string{"--output=x", "no-such-branch"} {
@@ -132,6 +141,25 @@ func TestRunInputErrors(t *testing.T) {
 	}
 }
 
+// TestRunKeepsTheKeyOfARepeatedName checks, through git, that a change
+// adding a build-tagged twin of a function above the cap leaves that
+// function unchanged rather than new.
+func TestRunKeepsTheKeyOfARepeatedName(t *testing.T) {
+	dir := gitRepo(t)
+	twin := "//go:build windows\n\npackage a\n\nfunc Untouched() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "internal", "a", "untouched_windows.go"), []byte(twin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := run(&out, fixtureOptions(dir, "HEAD")); err != nil {
+		t.Fatalf("run against HEAD: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "| `internal/a.Untouched in internal/a/a.go` | `internal/a/a.go:11` | 5 | 5 | unchanged |") {
+		t.Errorf("Untouched is not unchanged:\n%s", out.String())
+	}
+}
+
+// TestRunSeveralDirs checks run over internal/ and cmd/.
 func TestRunSeveralDirs(t *testing.T) {
 	dir := gitRepo(t)
 	opts := fixtureOptions(dir, "main")
@@ -156,7 +184,9 @@ func TestRunSeveralDirs(t *testing.T) {
 	}
 }
 
+// TestValidDirs checks the directories -dir accepts.
 func TestValidDirs(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		dir  string
 		want bool

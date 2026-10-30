@@ -26,6 +26,7 @@ const (
 	unchanged              // above the cap at the merge base, source unchanged
 )
 
+// fails reports whether the state fails the ratchet.
 func (s state) fails() bool { return s == added || s == crossed || s == rose }
 
 // entry is a function above the cap in the working tree or at the merge
@@ -39,6 +40,8 @@ type entry struct {
 	state     state
 }
 
+// result is what evaluate found: the functions the report lists and the
+// counts it states.
 type result struct {
 	limit     int
 	entries   []entry
@@ -46,6 +49,7 @@ type result struct {
 	baseAbove int // functions above the cap at the merge base
 }
 
+// failures counts the entries that fail the ratchet.
 func (r result) failures() int {
 	n := 0
 	for _, e := range r.entries {
@@ -56,8 +60,10 @@ func (r result) failures() int {
 	return n
 }
 
+// passed reports whether every rule holds.
 func (r result) passed() bool { return r.failures() == 0 }
 
+// count counts the entries in state s.
 func (r result) count(s state) int {
 	n := 0
 	for _, e := range r.entries {
@@ -71,9 +77,10 @@ func (r result) count(s state) int {
 // evaluate compares the working tree (head) with the merge base (base).
 // A function above limit at the merge base may change, but its score may not
 // rise; any other function, new or not, scores limit or less. A function is
-// matched across the trees by its package directory and name, so moving it
-// to another file of the package keeps it, while renaming it or moving it to
-// another package makes it new.
+// matched across the trees by its key, its package directory and name, so
+// moving it to another file of the package keeps it, while renaming it or
+// moving it to another package makes it new. A name declared more than once
+// in either tree is matched by file too (keyAcross).
 func evaluate(base, head map[string]function, limit int) result {
 	r := result{limit: limit, checked: len(head)}
 	for _, h := range head {
@@ -179,6 +186,8 @@ func codeList(items []string) string {
 	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
 }
 
+// writeTable writes title and a table of the entries that keep selects,
+// and nothing when it selects none.
 func writeTable(b *strings.Builder, title string, entries []entry, keep func(entry) bool, limit int) {
 	var rows []entry
 	for _, e := range entries {
@@ -197,6 +206,8 @@ func writeTable(b *strings.Builder, title string, entries []entry, keep func(ent
 	b.WriteString("\n")
 }
 
+// scoreText is a score cell: the score, or "-" for a function absent from
+// that tree.
 func scoreText(score int, absent bool) string {
 	if absent {
 		return "-"
@@ -204,6 +215,7 @@ func scoreText(score int, absent bool) string {
 	return fmt.Sprint(score)
 }
 
+// describe is the Result cell of an entry: what the ratchet says about it.
 func describe(e entry, limit int) string {
 	switch e.state {
 	case added:
@@ -226,6 +238,7 @@ func describe(e entry, limit int) string {
 	}
 }
 
+// verdict is the Result cell of a rule that holds or not.
 func verdict(ok bool) string {
 	if ok {
 		return "pass"

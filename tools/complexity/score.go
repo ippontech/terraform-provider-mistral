@@ -59,7 +59,8 @@ type tree map[string][]byte
 type function struct {
 	// key identifies the function across the two trees: its package
 	// directory, then its name as gocognit prints it, e.g.
-	// "internal/services/agents.(*AgentResource).Update".
+	// "internal/services/agents.(*AgentResource).Update", qualified by
+	// file when the name repeats (keyAcross).
 	key   string
 	file  string
 	line  int
@@ -70,41 +71,63 @@ type function struct {
 }
 
 // scoreTree scores every function declared in the files of t, generated
-// files aside. The scores are gocognit's, computed file by file as
-// golangci-lint's gocognit linter does, except that the //gocognit:ignore
+// files aside, in file order then declaration order, each with its key
+// unqualified (see keyed). The scores are gocognit's, computed file by file
+// as golangci-lint's gocognit linter does, except that the //gocognit:ignore
 // directive is not honoured.
-func scoreTree(t tree) (map[string]function, error) {
-	byKey := map[string][]function{}
+func scoreTree(t tree) ([]function, error) {
+	var out []function
 	for _, name := range slices.Sorted(maps.Keys(t)) {
 		fns, err := scoreFile(name, t[name])
 		if err != nil {
 			return nil, err
 		}
-		for _, fn := range fns {
-			byKey[fn.key] = append(byKey[fn.key], fn)
-		}
-	}
-	out := make(map[string]function, len(byKey))
-	for key, fns := range byKey {
-		if len(fns) == 1 {
-			out[key] = fns[0]
-			continue
-		}
-		// init functions, or one function per build-tagged file: tell them
-		// apart by file, then by rank within the file.
-		rank := map[string]int{}
-		for _, fn := range fns {
-			rank[fn.file]++
-			fn.key = fmt.Sprintf("%s in %s", key, fn.file)
-			if rank[fn.file] > 1 {
-				fn.key = fmt.Sprintf("%s#%d", fn.key, rank[fn.file])
-			}
-			out[fn.key] = fn
-		}
+		out = append(out, fns...)
 	}
 	return out, nil
 }
 
+// keyAcross indexes the functions of the merge base and of the working tree
+// by key, with the same rule in both trees: a key declared more than once in
+// either tree is qualified in both. Qualifying it in one tree only would
+// change the key of a function that a change leaves alone, when the change
+// adds or removes a second declaration of its name (a second init, a
+// build-tagged twin): the ratchet would then report the function as new, and
+// its old key as gone.
+func keyAcross(base, head []function) (map[string]function, map[string]function) {
+	repeated := map[string]bool{}
+	for _, fns := range [][]function{base, head} {
+		seen := map[string]bool{}
+		for _, fn := range fns {
+			repeated[fn.key] = repeated[fn.key] || seen[fn.key]
+			seen[fn.key] = true
+		}
+	}
+	return keyed(base, repeated), keyed(head, repeated)
+}
+
+// keyed indexes fns by key. A repeated key, that of init functions or of one
+// function per build-tagged file, is told apart by file, then by rank within
+// the file: "internal/a.init in internal/a/a.go", then "...#2".
+func keyed(fns []function, repeated map[string]bool) map[string]function {
+	out := make(map[string]function, len(fns))
+	rank := map[string]int{}
+	for _, fn := range fns {
+		if repeated[fn.key] {
+			inFile := fmt.Sprintf("%s in %s", fn.key, fn.file)
+			rank[inFile]++
+			fn.key = inFile
+			if rank[inFile] > 1 {
+				fn.key = fmt.Sprintf("%s#%d", inFile, rank[inFile])
+			}
+		}
+		out[fn.key] = fn
+	}
+	return out
+}
+
+// scoreFile scores the functions declared in one file, none when the file is
+// generated, each keyed by its package directory and name.
 func scoreFile(name string, src []byte) ([]function, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, name, src, parser.ParseComments|parser.SkipObjectResolution)
@@ -142,6 +165,8 @@ func funcName(fd *ast.FuncDecl) string {
 	return fmt.Sprintf("(%s).%s", recvString(fd.Recv.List[0].Type), fd.Name.Name)
 }
 
+// recvString returns the type name of a receiver, with its "*" for a pointer
+// and without its type parameters.
 func recvString(x ast.Expr) string {
 	switch t := x.(type) {
 	case *ast.Ident:

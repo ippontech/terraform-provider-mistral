@@ -46,6 +46,7 @@ var errRatchetFailed = errors.New("complexity ratchet failed")
 // of .golangci.yml does: they are test code.
 const defaultExclude = `^internal/(acctest|providertest|sdktest)/`
 
+// options are the flags of the command, as run reads them.
 type options struct {
 	base    string
 	root    string // repository root; "" for the top level of the current one
@@ -54,6 +55,7 @@ type options struct {
 	exclude *regexp.Regexp
 }
 
+// main parses the flags, calls run and turns its error into the exit status.
 func main() {
 	base := flag.String("base", "", "base branch or commit; the ratchet compares with the merge base of HEAD and it (required)")
 	root := flag.String("root", "", "repository root (default: the top level of the repository holding the current directory)")
@@ -92,6 +94,9 @@ func validDirs(dirs []string) bool {
 	return !slices.ContainsFunc(dirs, func(d string) bool { return d == "/" || !strings.HasSuffix(d, "/") })
 }
 
+// run scores the functions of the working tree and of its merge base with
+// opts.base, writes the Markdown report to w, and returns errRatchetFailed
+// when a rule fails, another error when an input cannot be read.
 func run(w io.Writer, opts options) error {
 	root := opts.root
 	if root == "" {
@@ -114,14 +119,15 @@ func run(w io.Writer, opts options) error {
 	if err != nil {
 		return err
 	}
-	base, err := scoreTree(baseTree)
+	baseFns, err := scoreTree(baseTree)
 	if err != nil {
 		return fmt.Errorf("merge base %.12s: %w", mergeBase, err)
 	}
-	head, err := scoreTree(headTree)
+	headFns, err := scoreTree(headTree)
 	if err != nil {
 		return err
 	}
+	base, head := keyAcross(baseFns, headFns)
 	r := evaluate(base, head, opts.limit)
 	rep := report{mergeBase: mergeBase[:min(12, len(mergeBase))], dirs: opts.dirs, exclude: opts.exclude.String(), gocognit: moduleVersion("github.com/uudashr/gocognit")}
 	if err := writeReport(w, r, rep); err != nil {
