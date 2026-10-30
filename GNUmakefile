@@ -88,7 +88,9 @@ terraform-fmt-check:
 
 # Each example directory against the provider just built: catches an attribute
 # renamed or removed in the schema that an example (and so the docs) still uses.
+# The tests of tools/validate-examples.sh run first, offline.
 terraform-validate: install .dev.tfrc
+	tools/validate-examples_test.sh
 	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc tools/validate-examples.sh $(EXAMPLE_DIRS)
 
 # tests/ is the root module of the native tests: versions.tf maps the provider

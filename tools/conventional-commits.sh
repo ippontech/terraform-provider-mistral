@@ -39,15 +39,57 @@ check() {
 	fi
 }
 
+# read_subject <file> sets subject to the subject git commits from the
+# message file the commit-msg hook gets. git runs the hook before it cleans
+# the message up as commit.cleanup says (git help commit, --cleanup), so this
+# does the same cleanup with git stripspace:
+#
+# - strip removes the comment lines, those of core.commentChar; whitespace,
+#   verbatim and scissors keep them, and the subject skips the blank lines
+#   above it in every mode;
+# - default is strip when an editor opened, whitespace otherwise: git runs the
+#   hook with GIT_EDITOR=: when none opens (-m, -F);
+# - after an editor, git cuts the message at its scissors line (with -v, or
+#   with commit.cleanup=scissors).
+#
+# The --cleanup option of git commit does not reach the hook: this follows
+# commit.cleanup only. And with core.commentChar=auto, git comments with the
+# first of #;@!$%^&|: that starts no line of the message before the editor
+# opens (a template, an amended message), which the hook cannot see, while
+# git stripspace takes #: after a template whose lines start with #, git
+# keeps them, and the subject checked here can differ from the one
+# committed. The commit-messages job of CI checks the subjects committed.
+read_subject() {
+	local file=$1 mode editor=true comment text
+	mode=$(git config commit.cleanup || echo default)
+	if [[ "${GIT_EDITOR:-}" == ":" ]]; then
+		editor=false
+	fi
+	if [[ "${mode}" == default ]]; then
+		mode=whitespace
+		if ${editor}; then mode=strip; fi
+	fi
+	text=$(cat "${file}")
+	if ${editor}; then
+		comment=$(printf 'x\n' | git stripspace --comment-lines)
+		text=$(scissors="${comment%x}------------------------ >8 ------------------------" \
+			awk '$0 == ENVIRON["scissors"] { exit } { print }' <<<"${text}")
+	fi
+	if [[ "${mode}" == strip ]]; then
+		text=$(git stripspace --strip-comments <<<"${text}")
+	else
+		text=$(git stripspace <<<"${text}")
+	fi
+	subject=${text%%$'\n'*}
+}
+
 case "${1:-}" in
 title)
 	check "PR title" "${TITLE:?TITLE is not set}"
 	;;
 message)
-	file=${2:?usage: $0 message <file>}
-	# git strips the comment lines of an editor message after the hook runs.
-	message=$(grep -v '^#' "${file}" || true)
-	check "Commit message" "$(head -n 1 <<<"${message}")"
+	read_subject "${2:?usage: $0 message <file>}"
+	check "Commit message" "${subject}"
 	;;
 range)
 	range=${2:?usage: $0 range <base>..<head>}
