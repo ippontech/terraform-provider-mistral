@@ -96,11 +96,20 @@ func contentType(source string) string {
 }
 
 // replaceUnlessImported replaces the document when source or source_hash
-// changes from a value to another, the way an upload of a new file would. A
-// value set where the state has none (after an import, which cannot recover
-// the file), or removed, only records the change in place.
-func replaceUnlessImported(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
-	resp.RequiresReplace = !req.StateValue.IsNull() && !req.PlanValue.IsNull()
+// changes, the way an upload of a new file would, except on the first apply
+// after an import: an import cannot recover the file, so both are null in its
+// state, and that apply records them in place. The import marker is a null
+// source in the state, which is required and so set by every create; a null
+// source_hash is not one, since a document uploaded without a hash has none
+// either. Adding a hash to such a document replaces it: Terraform never read
+// the file, so it cannot tell whether the content changed since the upload,
+// and recording the hash in place would keep the old content for good.
+// Removing source_hash only records the change: it stops following the
+// content, and has nothing to upload.
+func replaceUnlessImported(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+	var source types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("source"), &source)...)
+	resp.RequiresReplace = !source.IsNull() && !req.PlanValue.IsNull()
 }
 
 // nameFromSource plans the file name of source for a name the configuration
