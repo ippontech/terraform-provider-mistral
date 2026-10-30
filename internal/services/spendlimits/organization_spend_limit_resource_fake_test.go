@@ -4,10 +4,14 @@
 package spendlimits_test
 
 import (
+	"context"
 	"encoding/json"
+	"math/big"
 	"regexp"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
@@ -449,4 +453,137 @@ func TestOrganizationSpendLimitResourceRejectsAnotherImportID(t *testing.T) {
 			},
 		},
 	})
+}
+
+// When an update fails, the state Terraform saves is the prior one, not the
+// plan: terraform-plugin-framework v1.19.0 fills the response of Update with
+// the prior state ("Require explicit provider updates for tracking
+// successful updates", fwserver.UpdateResource), and Update writes the state
+// only after a POST succeeds. A test step cannot show it: a failed step stops
+// before its state checks, and the next refresh reads the fake again. So the
+// test sends ApplyResourceChange to the provider server itself.
+func TestOrganizationSpendLimitResourceKeepsThePriorStateWhenAnUpdateFails(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		seedLimit      any
+		prior, planned limitValues
+		failPost       bool
+		wantError      string
+		wantPosts      int
+	}{
+		"refused without an amount": {nil, limitValues{nil, false}, limitValues{nil, true}, false, "No amount to send with no_monthly_limit", 0},
+		"POST error":                {500, limitValues{big.NewFloat(500), false}, limitValues{big.NewFloat(800), false}, true, "Cannot set the organization spend limit", 1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFake(t)
+			f.seed(false, c.seedLimit)
+			if c.failPost {
+				f.FailNext(routeSetLimit, 500, 1)
+			}
+
+			newState, diags := applyUpdate(t, f, c.prior, c.planned)
+
+			if len(diags) != 1 || diags[0].Severity != tfprotov6.DiagnosticSeverityError || diags[0].Summary != c.wantError {
+				t.Fatalf("diagnostics = %+v, want one error %q", diags, c.wantError)
+			}
+			if !newState.Equal(c.prior.value()) {
+				t.Errorf("state after the failed update = %s, want the prior state %s", newState, c.prior.value())
+			}
+			f.AssertCalled(routeSetLimit, c.wantPosts)
+		})
+	}
+}
+
+// limitValues are the arguments of a spend limit state: amount, nil for
+// null, and no_monthly_limit. Its id is organization and its currency EUR.
+type limitValues struct {
+	amount  *big.Float
+	noLimit bool
+}
+
+// limitType is the type of a spend limit state.
+var limitType = tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+	"id": tftypes.String, "amount": tftypes.Number, "no_monthly_limit": tftypes.Bool, "currency": tftypes.String,
+}}
+
+// value is the state of v.
+func (v limitValues) value() tftypes.Value {
+	var amount any
+	if v.amount != nil {
+		amount = v.amount
+	}
+	return tftypes.NewValue(limitType, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, "organization"), "amount": tftypes.NewValue(tftypes.Number, amount),
+		"no_monthly_limit": tftypes.NewValue(tftypes.Bool, v.noLimit), "currency": tftypes.NewValue(tftypes.String, "EUR"),
+	})
+}
+
+// config is the configuration of v: its id and currency are computed, so null.
+func (v limitValues) config() tftypes.Value {
+	var amount any
+	if v.amount != nil {
+		amount = v.amount
+	}
+	return tftypes.NewValue(limitType, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, nil), "amount": tftypes.NewValue(tftypes.Number, amount),
+		"no_monthly_limit": tftypes.NewValue(tftypes.Bool, v.noLimit), "currency": tftypes.NewValue(tftypes.String, nil),
+	})
+}
+
+// applyUpdate configures the provider of the fake with the Admin API key and
+// sends it the ApplyResourceChange of an update of the spend limit from prior
+// to planned, as Terraform does. It returns the new state and the
+// diagnostics of the answer.
+func applyUpdate(t *testing.T, f *fake, prior, planned limitValues) (tftypes.Value, []*tfprotov6.Diagnostic) {
+	t.Helper()
+	ctx := context.Background()
+	server, err := providertest.ProviderFactories(f.Server)["mistral"]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemas, err := server.GetProviderSchema(ctx, &tfprotov6.GetProviderSchemaRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := schemas.ResourceSchemas["mistral_organization_spend_limit"].ValueType(); !got.Equal(limitType) {
+		t.Fatalf("the schema of the spend limit is %s, the test builds %s", got, limitType)
+	}
+	providerType := schemas.Provider.ValueType().(tftypes.Object)
+	settings := map[string]tftypes.Value{}
+	for name, typ := range providerType.AttributeTypes {
+		settings[name] = tftypes.NewValue(typ, nil)
+	}
+	settings["admin_api_key"] = tftypes.NewValue(tftypes.String, sdktest.TestAdminKey)
+	configured, err := server.ConfigureProvider(ctx, &tfprotov6.ConfigureProviderRequest{
+		Config: dynamicValue(t, tftypes.NewValue(providerType, settings)),
+	})
+	if err != nil || len(configured.Diagnostics) > 0 {
+		t.Fatalf("ConfigureProvider: %v %+v", err, configured)
+	}
+	applied, err := server.ApplyResourceChange(ctx, &tfprotov6.ApplyResourceChangeRequest{
+		TypeName:     "mistral_organization_spend_limit",
+		PriorState:   dynamicValue(t, prior.value()),
+		PlannedState: dynamicValue(t, planned.value()),
+		Config:       dynamicValue(t, planned.config()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newState, err := applied.NewState.Unmarshal(limitType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newState, applied.Diagnostics
+}
+
+// dynamicValue encodes v for the provider protocol.
+func dynamicValue(t *testing.T, v tftypes.Value) *tfprotov6.DynamicValue {
+	t.Helper()
+	dv, err := tfprotov6.NewDynamicValue(v.Type(), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &dv
 }
