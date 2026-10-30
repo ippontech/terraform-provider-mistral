@@ -25,6 +25,8 @@ import (
 // leaves package_min null.
 const trimFixture = "example.com/m/"
 
+// matchFixture selects the files the summary lists one by one, as the
+// default -match does.
 var matchFixture = regexp.MustCompile(`_(resource|data_source)\.go$`)
 
 // gateFixture copies testdata/coverage.json to a temporary directory with
@@ -87,6 +89,7 @@ func runGate(t *testing.T, opts options) (string, error) {
 
 // TestGateRules checks each rule passing and failing, through the report.
 func TestGateRules(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		edit    func(string) string
@@ -168,6 +171,7 @@ func TestGateRules(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			opts := gateFixture(t, tc.edit)
 			if tc.noDiff {
 				opts.diffPath = ""
@@ -193,6 +197,7 @@ func TestGateRules(t *testing.T) {
 // TestTotalRule checks the total rule on exact counts: a total exactly at
 // the target holds, and an excluded file does not count.
 func TestTotalRule(t *testing.T) {
+	t.Parallel()
 	files := map[string]*fileCoverage{
 		"m/a.go":    {Name: "m/a.go", Total: 5, Covered: 4},
 		"m/main.go": {Name: "m/main.go", Total: 5},
@@ -216,6 +221,7 @@ func TestTotalRule(t *testing.T) {
 
 // TestGateDiffFromStdin checks that -diff - reads the diff from stdin.
 func TestGateDiffFromStdin(t *testing.T) {
+	t.Parallel()
 	opts := gateFixture(t, nil)
 	opts.diffPath = "-"
 	diff, err := os.ReadFile(filepath.Join("testdata", "change.diff"))
@@ -234,6 +240,7 @@ func TestGateDiffFromStdin(t *testing.T) {
 // TestGateInputErrors checks that an invalid configuration, diff or profile
 // is an input error, not a failed rule, and says what is wrong.
 func TestGateInputErrors(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		edit func(string) string
@@ -266,6 +273,7 @@ func TestGateInputErrors(t *testing.T) {
 		{"missing config", nil, func(o *options) { o.configPath = "testdata/absent.json" }, "no such file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			opts := gateFixture(t, tc.edit)
 			if tc.opts != nil {
 				tc.opts(&opts)
@@ -290,6 +298,7 @@ func TestGateInputErrors(t *testing.T) {
 // TestSummaryWithoutConfig checks that without -config, run prints the
 // summary over every file and no gate.
 func TestSummaryWithoutConfig(t *testing.T) {
+	t.Parallel()
 	var out strings.Builder
 	if err := run(&out, nil, filepath.Join("testdata", "profile.txt"), options{match: matchFixture, trim: trimFixture}); err != nil {
 		t.Fatal(err)
@@ -302,6 +311,7 @@ func TestSummaryWithoutConfig(t *testing.T) {
 // TestParseDiff checks the changed ranges read from testdata/change.diff,
 // and that a malformed diff is refused.
 func TestParseDiff(t *testing.T) {
+	t.Parallel()
 	f, err := os.Open(filepath.Join("testdata", "change.diff"))
 	if err != nil {
 		t.Fatal(err)
@@ -349,6 +359,7 @@ func TestParseDiff(t *testing.T) {
 // TestPackagesOf checks the grouping of files by package, least covered
 // first, without the exclusions and the packages without statements.
 func TestPackagesOf(t *testing.T) {
+	t.Parallel()
 	f, err := os.Open(filepath.Join("testdata", "packages.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -372,12 +383,15 @@ func TestPackagesOf(t *testing.T) {
 	}
 }
 
+// update makes TestGateReportGolden rewrite its golden files instead of
+// comparing with them: go test -run TestGateReportGolden -update.
 var update = flag.Bool("update", false, "rewrite the golden reports in testdata")
 
 // TestGateReportGolden compares whole reports with testdata/gate-*.golden,
 // so that a change to the report shows in review. go test -run
 // TestGateReportGolden -update rewrites them.
 func TestGateReportGolden(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		edit func(string) string
@@ -391,6 +405,7 @@ func TestGateReportGolden(t *testing.T) {
 		{name: "nostatement", diff: "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			opts := gateFixture(t, tc.edit)
 			switch tc.diff {
 			case "":
@@ -422,6 +437,7 @@ func TestGateReportGolden(t *testing.T) {
 // TestParseDiffContextLines checks a diff with context lines (-U1 here): a
 // context line counts on both sides of the hunk.
 func TestParseDiffContextLines(t *testing.T) {
+	t.Parallel()
 	diff := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n" +
 		"@@ -1,3 +1,3 @@\n a\n-b\n+c\n d\n" +
 		"@@ -9,2 +9,3 @@\n e\n+f\n g\n"
@@ -437,6 +453,7 @@ func TestParseDiffContextLines(t *testing.T) {
 // TestParseDiffErrorMessages checks that a parse error says the line and
 // the problem, and that a read error comes through.
 func TestParseDiffErrorMessages(t *testing.T) {
+	t.Parallel()
 	for diff, want := range map[string]string{
 		"diff --git a/x b/x\n+++ b/x\n@@ -1 +1,2 @@\n+a\ndiff --git a/y b/y\n": `line 5: hunk ends early at "diff --git a/y b/y"`,
 		"+++ b/x\n@@ -1 @@\n":          `line 2: malformed hunk header "@@ -1 @@"`,
@@ -455,6 +472,7 @@ func TestParseDiffErrorMessages(t *testing.T) {
 
 // TestEvaluateDiffBlocks checks which blocks and files the diff rule counts.
 func TestEvaluateDiffBlocks(t *testing.T) {
+	t.Parallel()
 	files := map[string]*fileCoverage{
 		"m/x.go": {Name: "m/x.go", Total: 6, Covered: 2, counts: []blockCount{
 			{startLine: 20, endLine: 22, stmts: 2},
