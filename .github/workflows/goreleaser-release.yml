@@ -152,3 +152,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          # The tag that triggered this run. Without it GoReleaser takes the
+          # first tag on the commit in version order, so the run of
+          # v1.0.0-rc.1 and the run of v1.0.0 on the same commit would build
+          # the same version.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
