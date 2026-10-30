@@ -1,9 +1,9 @@
 // Copyright (c) Ippon
 // SPDX-License-Identifier: MPL-2.0
 
-// Package registry holds mistral_prompt and mistral_skill, the versioned
-// prompts and skills of a workspace (/v2/prompts and /v2/skills). The
-// specification calls both "registry objects": they share their routes,
+// Package promptsandskills holds mistral_prompt and mistral_skill, the
+// versioned prompts and skills of a workspace (/v2/prompts and /v2/skills).
+// The specification calls both "registry objects": they share their routes,
 // their version protocol and their sharing settings, which this package
 // writes once. It has nothing to do with internal/provider/registry.go, the
 // list of the provider's types.

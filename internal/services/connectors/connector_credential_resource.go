@@ -271,8 +271,11 @@ func (r *ConnectorCredentialResource) Delete(ctx context.Context, req resource.D
 }
 
 // ImportState reads <connector_id>:<scope>:<name>, or the resource
-// identity. The secret cannot be imported: the first apply after an import
-// sends credentials_wo, since the state has no credentials_wo_version.
+// identity. The secret cannot be imported, and Update sends credentials_wo
+// only when credentials_wo_version differs from the state, where an import
+// leaves it null: the first apply after an import sends the secret only when
+// the configuration sets credentials_wo_version. Without it, nothing sends
+// credentials_wo until it is set.
 func (r *ConnectorCredentialResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	var connectorID, scope, name string
 	if req.ID != "" {
