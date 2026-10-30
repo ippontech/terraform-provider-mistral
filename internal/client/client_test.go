@@ -4,6 +4,7 @@
 package client
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -233,10 +235,12 @@ func TestAnUploadIsNotCutByTheHeaderTimeout(t *testing.T) {
 	srv.AssertCalled("POST /v1/libraries", 1)
 }
 
-// failedWriteTransport fails its first attempt as a broken keep-alive
-// connection does: the write of the request fails, WroteRequest reports the
-// error, and RoundTrip returns it. Later attempts answer 201.
+// failedWriteTransport fails its first attempt as a broken connection does:
+// GotConn reports the connection, reused or new, the write of the request
+// fails, WroteRequest reports the error, and RoundTrip returns it. Later
+// attempts answer 201.
 type failedWriteTransport struct {
+	reused   bool
 	attempts atomic.Int64
 }
 
@@ -247,7 +251,9 @@ func (tr *failedWriteTransport) RoundTrip(r *http.Request) (*http.Response, erro
 	}
 	if tr.attempts.Add(1) == 1 {
 		err := errors.New("write tcp: broken pipe")
-		httptrace.ContextClientTrace(r.Context()).WroteRequest(httptrace.WroteRequestInfo{Err: err})
+		trace := httptrace.ContextClientTrace(r.Context())
+		trace.GotConn(httptrace.GotConnInfo{Reused: tr.reused})
+		trace.WroteRequest(httptrace.WroteRequestInfo{Err: err})
 		return nil, err
 	}
 	return &http.Response{
@@ -258,19 +264,156 @@ func (tr *failedWriteTransport) RoundTrip(r *http.Request) (*http.Response, erro
 	}, nil
 }
 
-// A create whose write failed never reached the server whole: it is
-// replayed, unlike a create that was written before the connection broke.
-func TestACreateWhoseWriteFailedIsReplayed(t *testing.T) {
+// A create whose write failed on a reused connection never reached the
+// server whole: it is replayed. On a new connection, the failed write
+// counts as sent, as a refusal mid-body does (see
+// TestAnUploadRefusedMidBodyIsNotReplayed): the create is not replayed.
+func TestACreateWhoseWriteFailedIsReplayedOnAReusedConnectionOnly(t *testing.T) {
 	t.Parallel()
-	transport := &failedWriteTransport{}
-	c := New(Config{BaseURL: "https://api.example", HTTPClient: &http.Client{Transport: transport}, Retry: fastRetry})
+	for name, reused := range map[string]bool{"reused": true, "new": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			transport := &failedWriteTransport{reused: reused}
+			c := New(Config{BaseURL: "https://api.example", HTTPClient: &http.Client{Transport: transport}, Retry: fastRetry})
 
-	err := c.do(context.Background(), call{method: http.MethodPost, path: "/v1/libraries", body: map[string]any{}, audience: workspaceKey}, nil)
+			err := c.do(context.Background(), call{method: http.MethodPost, path: "/v1/libraries", body: map[string]any{}, audience: workspaceKey}, nil)
+			want := int64(1)
+			if reused {
+				want = 2
+			}
+			if (err == nil) != reused {
+				t.Errorf("err = %v, want an error only on a new connection", err)
+			}
+			if got := transport.attempts.Load(); got != want {
+				t.Errorf("%d attempts, want %d", got, want)
+			}
+		})
+	}
+}
+
+// rawServer serves HTTP/1.1 on a bare listener, so that a test can drop a
+// connection in the middle of a request as a real server or proxy does,
+// which httptest's server does not. handle gets each request with its body
+// unread, numbered from 1 across connections, and answers it on c; the
+// connection is closed, unread data and all, when handle returns false.
+// rawServer returns the base URL and the count of accepted connections.
+func rawServer(t *testing.T, handle func(c net.Conn, r *http.Request, n int64) (keepAlive bool)) (string, *atomic.Int64) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		accepted, requests atomic.Int64
+		mu                 sync.Mutex
+		open               []net.Conn
+	)
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range open {
+			_ = c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			mu.Lock()
+			open = append(open, c)
+			mu.Unlock()
+			go func() {
+				defer func() { _ = c.Close() }()
+				br := bufio.NewReader(c)
+				for {
+					r, err := http.ReadRequest(br)
+					if err != nil || !handle(c, r, requests.Add(1)) {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return "http://" + ln.Addr().String(), &accepted
+}
+
+// largeFile is a 32 MB document, more than the kernel buffers of a loopback
+// connection hold, so that a server that stops reading breaks its write.
+func largeFile() DocumentFile {
+	return DocumentFile{Filename: "large.bin", Open: func() (io.ReadCloser, error) {
+		return io.NopCloser(io.LimitReader(zeros{}, 32<<20)), nil
+	}}
+}
+
+// zeros reads as an endless run of zero bytes.
+type zeros struct{}
+
+// Read fills p with zeros.
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+// A server or proxy that refuses an upload before reading it (a 413 for a
+// file too large) and closes the connection breaks the write of the body.
+// net/http then returns the broken write in most runs, and the 413 when it
+// read the answer first; a server that drops the connection without an
+// answer always gives the broken write. On a new connection that write
+// counts as sent: the upload is not sent three more times only to be
+// refused again.
+func TestAnUploadRefusedMidBodyIsNotReplayed(t *testing.T) {
+	t.Parallel()
+	answers := map[string]string{
+		"refused with a 413":        "HTTP/1.1 413 Request Entity Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+		"dropped without an answer": "",
+	}
+	for name, answer := range answers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			url, connections := rawServer(t, func(c net.Conn, _ *http.Request, _ int64) bool {
+				_, _ = io.WriteString(c, answer)
+				return false
+			})
+			c := New(Config{BaseURL: url, Retry: fastRetry})
+
+			if _, _, err := c.UploadDocument(context.Background(), "lib_1", largeFile()); err == nil {
+				t.Error("the upload succeeded")
+			}
+			if got := connections.Load(); got != 1 {
+				t.Errorf("%d attempts, want 1", got)
+			}
+		})
+	}
+}
+
+// An upload on a kept-alive connection that the server has closed in the
+// meantime breaks while its body is written: the server never got it, so it
+// is replayed, on a new connection.
+func TestAnUploadOnAClosedKeepAliveConnectionIsReplayed(t *testing.T) {
+	t.Parallel()
+	url, connections := rawServer(t, func(c net.Conn, r *http.Request, n int64) bool {
+		if n == 2 {
+			return false // the second request finds the connection closed
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(c, "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}")
+		return true
+	})
+	c := New(Config{BaseURL: url, Retry: fastRetry})
+	ctx := context.Background()
+
+	if _, _, err := c.UploadDocument(ctx, "lib_1", textFile("a.txt", "a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.UploadDocument(ctx, "lib_1", largeFile()); err != nil {
 		t.Errorf("err = %v, want the 201 of the replay", err)
 	}
-	if got := transport.attempts.Load(); got != 2 {
-		t.Errorf("%d attempts, want 2", got)
+	if got := connections.Load(); got != 2 {
+		t.Errorf("%d connections, want the kept-alive one and the replay's", got)
 	}
 }
 

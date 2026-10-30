@@ -168,22 +168,31 @@ func (cl *Client) do(ctx context.Context, c call, out any) error {
 	}
 }
 
-// send makes one attempt. sent reports whether the whole request was
+// send makes one attempt. sent reports whether the request counts as
 // written to the connection, which decides whether a write may be replayed
 // after a connection error.
 func (cl *Client) send(ctx context.Context, c call, payload []byte) (*http.Response, bool, error) {
 	// The transport calls WroteRequest from the goroutine that writes the
 	// body, which can still be running when Do returns: a server may answer
 	// an upload (a 413, say) before reading all of it. httptrace allows a
-	// hook to run after the request has completed, hence the atomic. A write
-	// that failed (a broken pipe on a reused keep-alive connection) did not
-	// deliver the request, so a create may still be replayed.
-	var sent atomic.Bool
-	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
-		if info.Err == nil {
-			sent.Store(true)
-		}
-	}}
+	// hook to run after the request has completed, hence the atomics.
+	//
+	// A write that failed on a reused connection, a keep-alive connection the
+	// server closed in the meantime, did not deliver the request: it counts
+	// as unsent, so that a create may be replayed. On a new connection, a
+	// failed write is most often a server or proxy that refused the request
+	// early (a 413 for a large upload) and closed the connection: net/http
+	// then returns the broken write rather than the answer, and a replay
+	// would only be refused again, so it counts as sent.
+	var sent, reused atomic.Bool
+	trace := &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused.Store(info.Reused) },
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil || !reused.Load() {
+				sent.Store(true)
+			}
+		},
+	}
 	ctx = httptrace.WithClientTrace(ctx, trace)
 
 	u := cl.cfg.BaseURL + c.path
