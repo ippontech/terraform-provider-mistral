@@ -246,8 +246,9 @@ func TestAPIKeyResourceReplacesAKeyWhenAnExpirationIsAdded(t *testing.T) {
 // An expiration added to a key still valid that already expires on or
 // before that date, as a policy sets it, is recorded in place: the key meets
 // the date, and a new key would expire no earlier. A key that expires later,
-// that has expired or expires today, or an expiration_date the provider
-// cannot compare, replaces the key, and so does a date unknown at plan time.
+// that has expired or expires today, or an expiration_date in neither format
+// the provider reads, replaces the key, and so does a date unknown at plan
+// time.
 func TestAPIKeyResourceRecordsAnExpirationTheKeyAlreadyMeets(t *testing.T) {
 	t.Parallel()
 	const policyDate = "2026-11-28" // today in the fake, plus the 30 days of the policy
@@ -263,8 +264,12 @@ func TestAPIKeyResourceRecordsAnExpirationTheKeyAlreadyMeets(t *testing.T) {
 		"the date the key has": {true, "", `"2026-11-28"`, plancheck.ResourceActionUpdate, "2026-11-28", policyDate, 1},
 		"a later date":         {true, "", `"2027-06-30"`, plancheck.ResourceActionUpdate, "2027-06-30", policyDate, 1},
 		"an earlier date":      {true, "", `"2026-11-01"`, plancheck.ResourceActionDestroyBeforeCreate, "2026-11-01", "2026-11-01", 2},
-		"a date and time":      {false, "2026-11-28T00:00:00Z", `"2027-06-30"`, plancheck.ResourceActionDestroyBeforeCreate, "2027-06-30", "2027-06-30", 2},
-		"an unknown date":      {true, "", `terraform_data.expiry.output`, plancheck.ResourceActionDestroyBeforeCreate, "2026-11-28", policyDate, 2},
+		// The specification types expiration_date as a date; a date and time
+		// counts by its UTC date.
+		"a date and time":             {false, "2026-11-28T00:00:00Z", `"2027-06-30"`, plancheck.ResourceActionUpdate, "2027-06-30", "2026-11-28T00:00:00Z", 1},
+		"a date and time west of UTC": {false, "2026-11-28T23:30:00-02:00", `"2026-11-28"`, plancheck.ResourceActionDestroyBeforeCreate, "2026-11-28", "2026-11-28", 2},
+		"another format":              {false, "28/11/2026", `"2027-06-30"`, plancheck.ResourceActionDestroyBeforeCreate, "2027-06-30", "2027-06-30", 2},
+		"an unknown date":             {true, "", `terraform_data.expiry.output`, plancheck.ResourceActionDestroyBeforeCreate, "2026-11-28", policyDate, 2},
 		// The clock of the provider is the fake's today, 2026-10-29 (TestMain).
 		"an expired key":              {false, "2026-10-01", `"2027-06-30"`, plancheck.ResourceActionDestroyBeforeCreate, "2027-06-30", "2027-06-30", 2},
 		"a key that expires today":    {false, "2026-10-29", `"2027-06-30"`, plancheck.ResourceActionDestroyBeforeCreate, "2027-06-30", "2027-06-30", 2},

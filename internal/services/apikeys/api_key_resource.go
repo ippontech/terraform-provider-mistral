@@ -193,21 +193,48 @@ var now = time.Now
 // expiresBy reports whether the key of state is still valid and expires on
 // or before planned, a YYYY-MM-DD date. Still valid means an expiration_date
 // after today in UTC: a key that expires today, or has expired, is replaced,
-// so that the configured date gives a working key. The client reads
-// expiration_date as a YYYY-MM-DD date, the format of the specification; a
-// null date (a key that never expires) or another format reports false,
-// which replaces the key: the safe side.
+// so that the configured date gives a working key. A null expiration_date (a
+// key that never expires), or one dateOf cannot read, reports false, which
+// replaces the key: the safe side.
+//
+// Today is read at plan time, and again when Terraform plans the resource
+// once more at apply time. For a key whose expiration_date is the day an
+// apply crosses midnight UTC after its plan, the second answer differs, and
+// Terraform fails the apply with "Provider produced inconsistent final plan"
+// without calling the API; a new plan and apply settle it. Deciding from the
+// date of the last refresh, kept in the private state, would avoid that, but
+// a saved plan applied days later would then keep an expired key: failing is
+// the safer of the two, and the page says to plan again.
 func expiresBy(ctx context.Context, state tfsdk.State, planned string, diags *diag.Diagnostics) bool {
 	var current types.String
 	diags.Append(state.GetAttribute(ctx, path.Root("expiration_date"), &current)...)
-	expiry, err := time.Parse(time.DateOnly, current.ValueString())
+	expiry, err := dateOf(current.ValueString())
 	if err != nil {
 		return false
 	}
-	year, month, day := now().UTC().Date()
-	today := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 	asked, err := time.Parse(time.DateOnly, planned)
-	return err == nil && expiry.After(today) && !expiry.After(asked)
+	return err == nil && expiry.After(utcDate(now())) && !expiry.After(asked)
+}
+
+// dateOf reads an expiration_date: a YYYY-MM-DD date, the format of the
+// specification (APIKeyOUT, format: date), or an RFC 3339 date and time, read
+// as its UTC date, in case the API answers one (CLAUDE.md, "To check on the
+// first live run").
+func dateOf(s string) (time.Time, error) {
+	if d, err := time.Parse(time.DateOnly, s); err == nil {
+		return d, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return utcDate(t), nil
+}
+
+// utcDate is the date of t in UTC, at midnight.
+func utcDate(t time.Time) time.Time {
+	year, month, day := t.UTC().Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
 // Configure takes the client of the provider, and fails without the Admin API
