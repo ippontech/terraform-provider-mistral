@@ -24,7 +24,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Tool versions pinned in a workflow, annotated with a `# renovate:` comment on the preceding line (no built-in manager reads action inputs or env values)",
+      "description": "Tool versions pinned in a workflow, annotated with a `# renovate:` comment on the preceding line. The github-actions manager reads no env value, and the version input of a few known actions only (goreleaser-action, golangci-lint-action, setup-terraform): it reads those lines too, and the per-tool group below puts both in one pull request.",
       "managerFilePatterns": [".github/workflows/*.yml"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+\\S+: [\"']?(?<currentValue>[^\"'\\s]+)[\"']?"
@@ -44,10 +44,22 @@
       "groupSlug": "go-deps"
     },
     {
-      "description": "Go toolchain and indirect module updates change the shipped binary like direct ones, so they get the fix type, which lists them under Fixes in the release notes and calls for a patch release. The :semanticPrefixFixDepsChoreOthers preset of config:recommended gives fix to the require depType only, chore to the rest, so a standard library security fix would be filtered out of the notes.",
+      "description": "Renovate updates a module with go get, which leaves go.mod and go.sum untidy, and the lint job's make tidy-check then fails the pull request: go mod tidy after every Go module update.",
       "matchManagers": ["gomod"],
+      "postUpdateOptions": ["gomodTidy"]
+    },
+    {
+      "description": "Go toolchain and indirect module updates of the root go.mod change the shipped binary like direct ones, so they get the fix type, which lists them under Fixes in the release notes and calls for a patch release. The :semanticPrefixFixDepsChoreOthers preset of config:recommended gives fix to the require depType only, chore to the rest, so a standard library security fix would be filtered out of the notes.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["go.mod"],
       "matchDepTypes": ["golang", "toolchain", "indirect"],
       "semanticCommitType": "fix"
+    },
+    {
+      "description": "tools/go.mod builds the development tools (tfplugindocs, gremlins, the complexity ratchet, the coverage gate, specdrift), which never ship in the provider: chore, which the release notes leave out and which calls for no release, whatever the depType (the preset would give fix to its require ones). A group that also updates the root go.mod keeps fix, the highest type of its updates.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["tools/go.mod"],
+      "semanticCommitType": "chore"
     },
     {
       "matchManagers": ["mise"],
@@ -73,6 +85,20 @@
       ],
       "groupName": null,
       "labels": ["dependencies", "release-tooling"]
+    },
+    {
+      "description": "A tool pinned in several files (mise.toml, a workflow, .pre-commit-config.yaml) is read by several managers, which the rules above put in different groups, so its pins drifted apart and two pull requests could edit the same line. Every manager reports the same packageName for it, so one group per packageName bumps all its pins in one pull request (and groupSlug, without the slash: an earlier rule's groupSlug would otherwise stay and put every tool in one branch). Last, so that it overrides the manager groups and the groupName null of the release tooling rule, whose labels GoReleaser keeps: GoReleaser still gets a pull request of its own. A workflow pin checked against a hash (gitleaks, poutine, zizmor) still needs the hash updated by hand.",
+      "matchPackageNames": [
+        "boostsecurityio/poutine",
+        "gitleaks/gitleaks",
+        "golangci/golangci-lint",
+        "goreleaser/goreleaser",
+        "hashicorp/terraform",
+        "rhysd/actionlint",
+        "zizmorcore/zizmor"
+      ],
+      "groupName": "{{packageName}}",
+      "groupSlug": "{{{replace '/' '-' packageName}}}"
     }
   ]
 }

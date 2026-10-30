@@ -44,8 +44,9 @@ jobs:
       # GITLEAKS_VERSION and GITLEAKS_SHA256 together (value from the target
       # release's gitleaks_<version>_checksums.txt, linux_x64 line), and keep
       # the version in step with mise.toml. Renovate only bumps the version, so
-      # its PR fails here until the hash is updated by hand; renovate.json
-      # excludes gitleaks from automerge.
+      # its PR fails here until the hash is updated by hand. No Renovate PR
+      # merges by itself: renovate.json sets "automerge": false for every
+      # update.
       - name: Install gitleaks
         env:
           # renovate: datasource=github-releases depName=gitleaks/gitleaks

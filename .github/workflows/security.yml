@@ -70,7 +70,8 @@ jobs:
       # POUTINE_SHA256 together (value from the target release's
       # poutine_<version>_checksums.txt, poutine_Linux_x86_64.tar.gz line).
       # Renovate only bumps the version, so its PR fails here until the hash is
-      # updated by hand; renovate.json excludes poutine from automerge.
+      # updated by hand. No Renovate PR merges by itself: renovate.json sets
+      # "automerge": false for every update.
       - name: Install poutine
         env:
           # renovate: datasource=github-releases depName=boostsecurityio/poutine
@@ -173,7 +174,8 @@ jobs:
       # TFLINT_VERSION and TFLINT_SHA256 together (value from the target
       # release's checksums.txt, tflint_linux_amd64.zip line). Renovate only
       # bumps the version, so its PR goes red here until the hash is updated
-      # by hand; renovate.json therefore excludes tflint from automerge.
+      # by hand. No Renovate PR merges by itself: renovate.json sets
+      # "automerge": false for every update.
       - name: Install tflint
         env:
           # renovate: datasource=github-releases depName=terraform-linters/tflint
