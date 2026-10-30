@@ -199,6 +199,64 @@ func TestEscapePath(t *testing.T) {
 	if got := escapePath("/v1/agents", "a/b c", "versions"); got != "/v1/agents/a%2Fb%20c/versions" {
 		t.Errorf("escapePath = %q", got)
 	}
+	if got := escapePath(escapePath("/v1/connectors", "c 1"), "...", ".x"); got != "/v1/connectors/c%201/.../.x" {
+		t.Errorf("a built base and segments that only hold dots = %q", got)
+	}
+}
+
+// A segment that would move the request elsewhere once the URL is resolved
+// gives a path that names the segment and carries the mark send refuses.
+func TestEscapePathRefusesSegmentsThatChangeThePath(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"":                  `/v1/agents/%!(invalid path segment "")`,
+		".":                 `/v1/agents/%!(invalid path segment ".")`,
+		"..":                `/v1/agents/%!(invalid path segment "..")`,
+		"/v1/libraries":     `/v1/agents/%!(invalid path segment "/v1/libraries")`,
+		"/../libraries/LIB": `/v1/agents/%!(invalid path segment "/../libraries/LIB")`,
+	}
+	for segment, want := range tests {
+		path := escapePath("/v1/agents", "ag_1", segment, "aliases")
+		if path != want {
+			t.Errorf("escapePath with %q = %q, want %q", segment, path, want)
+		}
+		if !strings.Contains(path, invalidSegment) {
+			t.Errorf("escapePath with %q = %q, without the mark send refuses", segment, path)
+		}
+	}
+}
+
+// A typed call given such an ID fails with a build error, which is never
+// retried, before anything reaches the transport.
+func TestAnInvalidPathSegmentIsRefusedBeforeAnythingIsSent(t *testing.T) {
+	t.Parallel()
+	srv := sdktest.NewServer(t)
+	transport := &countingTransport{next: http.DefaultTransport}
+	c := New(Config{BaseURL: srv.URL, HTTPClient: &http.Client{Transport: transport}, Retry: fastRetry})
+	ctx := context.Background()
+
+	calls := map[string]func() error{
+		`invalid path segment "/../libraries/LIB"`: func() error { return c.DeleteAgent(ctx, "/../libraries/LIB") },
+		`invalid path segment ".."`:                func() error { _, err := c.GetAgent(ctx, ".."); return err },
+		`invalid path segment ""`:                  func() error { _, err := c.GetLibrary(ctx, ""); return err },
+		`invalid path segment "."`:                 func() error { return c.DeleteDocument(ctx, "lib_1", ".") },
+	}
+	for want, call := range calls {
+		err := call()
+		if _, ok := errors.AsType[*buildError](err); !ok {
+			t.Errorf("%s: err = %v, want a build error", want, err)
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to contain %s", err, want)
+		}
+		if err == nil || !strings.Contains(err.Error(), `a path segment is empty, ".", ".." or starts with "/"`) {
+			t.Errorf("err = %v, want it to say why the segment is refused", err)
+		}
+	}
+	if got := transport.n.Load(); got != 0 {
+		t.Errorf("%d attempts reached the transport, want none", got)
+	}
+	srv.AssertCalled("", 0)
 }
 
 // countingTransport counts the attempts that reach the transport, including
