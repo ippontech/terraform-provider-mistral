@@ -35,7 +35,7 @@ The release job waits in `Actions > GoReleaser Release`, on the run of the new t
 - **Names first.** Get the resource, attribute and import ID names right before 1.0.0. After it, a rename costs a major version and a `moved` block for every user.
 - **Condition for 1.0.0.** Every published resource and data source has passed an acceptance test against the live API (its registry entry says `acceptanceTested`). This includes the Admin API ones, so it needs Enterprise access from Mistral.
 
-The first release is `v0.1.0`.
+The first release is `v0.1.0`, an alpha: Hector Basset decided on 2026-10-30 to publish before any acceptance test against the live API. The index of the documentation says so (`templates/index.md.tmpl`), and so does the page of each type. Version numbers keep no pre-release suffix such as `-alpha.1`: Terraform and OpenTofu select a pre-release version only through an exact version constraint, so a `~>` or `>=` constraint would never install it.
 
 ## Release security
 

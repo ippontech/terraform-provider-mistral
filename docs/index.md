@@ -11,6 +11,8 @@ The Mistral AI provider manages objects of [Mistral AI](https://mistral.ai) with
 - in a workspace, with a standard API key: agents, libraries and their documents, connectors, prompts, skills and service accounts;
 - in an organization, with an Admin API key: workspaces, API keys, invites, user groups and the spend limit. The Admin API is available on Enterprise plans only, and Mistral grants access to it on request.
 
+~> **Alpha.** No resource or data source of this provider has been tested against the live Mistral API yet. Each one is tested against a fake of the API written from Mistral's documentation, and its page says so. Until 1.0.0, a minor version can rename or change attributes and behaviors: pin the provider version and read the release notes before upgrading. Please report any difference with the live API in an [issue](https://github.com/ippontech/terraform-provider-mistral/issues).
+
 Most of these endpoints are in public preview at Mistral: their fields can change without a deprecation period. The page of each resource and data source says whether it is in preview and whether it was tested against the live API.
 
 The provider needs Terraform or OpenTofu 1.11 or later.

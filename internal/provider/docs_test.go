@@ -21,6 +21,11 @@ const (
 	previewNote       = "-> **Public preview at Mistral.**"
 )
 
+// alphaNotice opens the index page while no registered type has passed an
+// acceptance test: the provider was published as an alpha on that basis
+// (RELEASE.md, Versions).
+const alphaNotice = "~> **Alpha.**"
+
 // subcategories are the Registry groups of CLAUDE.md, Naming and grouping.
 var subcategories = map[string]providerdata.Audience{
 	"Agents":                             providerdata.Workspace,
@@ -111,6 +116,24 @@ func checkPage(t *testing.T, p page) {
 
 // TestNoOrphanPages fails on a template or an example directory that no
 // registered type owns, as a rename leaves behind.
+// TestIndexAlphaNoticeMatchesTheRegistry keeps the alpha notice of the index
+// page while every type is fakeOnly, and fails once one type is
+// acceptanceTested, so that the provider's status gets reworded then.
+func TestIndexAlphaNoticeMatchesTheRegistry(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "templates", "index.md.tmpl"))
+	if err != nil {
+		t.Fatalf("no index template: %v", err)
+	}
+	all := append(
+		pages(t, "resources", "", resourceRegistrations()),
+		pages(t, "data-sources", "", dataSourceRegistrations())...)
+	alpha := !slices.ContainsFunc(all, func(p page) bool { return p.live == acceptanceTested })
+	if got := strings.Contains(string(raw), alphaNotice); got != alpha {
+		t.Errorf("index alpha notice present = %t, but every type fakeOnly = %t: reword the provider's status in templates/index.md.tmpl and README.md", got, alpha)
+	}
+}
+
 func TestNoOrphanPages(t *testing.T) {
 	var names []string
 	for _, p := range append(
