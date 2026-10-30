@@ -150,14 +150,16 @@ jobs:
       # tag cannot be deleted, but with no GitHub release created yet, the
       # job can run again on the same tag once the secret is fixed. When the
       # namespace moves to another key, change this fingerprint in a pull
-      # request, after the registries know the new key.
+      # request, after the registries know the new key, and before the next
+      # tag: a run reads this file as its tag holds it. GoReleaser signs with
+      # this exact primary key ("!" in .goreleaser.yml).
       - name: Check the signing key
         env:
           IMPORTED_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
           NAMESPACE_FINGERPRINT: CE0E4F5728703F5F413818AEC4C6311F36624DB7
         run: |
           if [[ "${IMPORTED_FINGERPRINT^^}" != "${NAMESPACE_FINGERPRINT}" ]]; then
-            echo "::error title=Release::GPG_PRIVATE_KEY holds the key '${IMPORTED_FINGERPRINT}', not ${NAMESPACE_FINGERPRINT}, the key the registries know for the ippontech namespace: fix the secret of the release environment, then rerun the failed jobs."
+            echo "::error title=Release::GPG_PRIVATE_KEY holds the key '${IMPORTED_FINGERPRINT}', not ${NAMESPACE_FINGERPRINT}, the key the registries know for the ippontech namespace. If the secret is wrong, fix it in the release environment and rerun the failed jobs. If the namespace moved to that key, a rerun cannot help (it runs this file as the tag holds it): change NAMESPACE_FINGERPRINT on main, then release a new version."
             exit 1
           fi
 
