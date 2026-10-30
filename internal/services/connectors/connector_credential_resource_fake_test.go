@@ -116,8 +116,9 @@ func TestConnectorCredentialResourceLifecycle(t *testing.T) {
 				ImportStateVerifyIgnore: []string{"credentials_wo_version"},
 			},
 			{
-				// The state of an import has no credentials_wo_version: the
-				// first apply sends the secret.
+				// The configuration sets credentials_wo_version, which the
+				// state of an import lacks: the plan is an update, whose
+				// apply sends the secret.
 				ResourceName:       credentialAddr,
 				ImportState:        true,
 				ImportStateKind:    resource.ImportBlockWithResourceIdentity,

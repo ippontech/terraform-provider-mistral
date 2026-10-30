@@ -35,7 +35,7 @@ The first credentials of an authentication method become its default. When `is_d
 
 ## Existing credentials
 
-The create checks that the connector has no credentials by that name in the scope. If it has, the create fails and gives the `import` block that brings them under Terraform. The import cannot recover the secret: the state of an imported resource has no `credentials_wo_version`, so the first apply after the import sends `credentials_wo`.
+The create checks that the connector has no credentials by that name in the scope. If it has, the create fails and gives the `import` block that brings them under Terraform. The import cannot recover the secret, and Terraform sends `credentials_wo` only when `credentials_wo_version` changes. The state of an imported resource has no `credentials_wo_version`: set it in the configuration, and the first apply after the import sends `credentials_wo`. Without it, Terraform does not send `credentials_wo`, whatever it holds, until `credentials_wo_version` is set.
 
 ## Example Usage
 
