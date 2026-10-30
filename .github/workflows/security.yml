@@ -35,15 +35,36 @@ jobs:
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
 
       # pull_request_target runs with the repository's secrets on code from a
-      # fork; no workflow here needs it. poutine flags its dangerous uses, this
-      # refuses any use as a trigger (a key or a list item of on:), so that a
-      # new workflow cannot start with one.
+      # fork; no workflow here needs it. poutine flags its dangerous uses and
+      # zizmor any use, but a comment in the workflow can silence both: this
+      # refuses any use as a trigger, so that a new workflow cannot start with
+      # one. The runner's yq (mikefarah yq 4) parses each workflow and lists
+      # the events of on: in any YAML form (string, list or mapping, block or
+      # flow style, quoted, through an alias), which a grep of the lines
+      # cannot. It fails closed: a workflow yq cannot parse fails the step,
+      # and so does a YAML tag on on:, its items or its keys other than the
+      # plain ones (!x, !!set), which the event list would not read. Every
+      # workflow file is read, hidden or with an extension in any case.
       - name: Refuse pull_request_target
         run: |
-          if grep -rnE '^\s*pull_request_target\s*:|^\s*-\s*pull_request_target\s*$|^on:\s*(\[[^]]*)?pull_request_target' .github/workflows; then
-            echo "::error title=pull_request_target::No workflow may use pull_request_target: it runs fork code with the repository's secrets."
-            exit 1
-          fi
+          set -euo pipefail
+          shopt -s nullglob nocaseglob dotglob
+          refused=0
+          for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+            [ -f "${workflow}" ] || continue
+            tags=$(yq 'explode(.) | .on | (., (select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[])) | tag' "${workflow}")
+            if grep -qvxE '!!(str|seq|map|null)' <<<"${tags}"; then
+              echo "::error file=${workflow},title=pull_request_target::on: holds a YAML tag other than !!str, !!seq, !!map or !!null, so this check cannot list its events: remove the tag."
+              refused=1
+              continue
+            fi
+            events=$(yq 'explode(.) | .on | (select(tag == "!!str"), (select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[]))' "${workflow}")
+            if grep -qx 'pull_request_target' <<<"${events}"; then
+              echo "::error file=${workflow},title=pull_request_target::No workflow may use pull_request_target: it runs fork code with the repository's secrets."
+              refused=1
+            fi
+          done
+          exit "${refused}"
 
   poutine:
     runs-on: ubuntu-latest
