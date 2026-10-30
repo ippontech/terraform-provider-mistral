@@ -23,8 +23,10 @@
 //	go run -C tools ./specdrift -spec /tmp/openapi.yaml -root ..          # check
 //	go run -C tools ./specdrift -spec /tmp/openapi.yaml -root .. -update  # rewrite
 //
-// It exits 1 when an operation changed, disappeared or is new to the
-// fingerprints file, and 2 on a usage or input error.
+// It exits 1 when an operation changed, disappeared, is new to the
+// fingerprints file or matches several operations of the specification, and
+// 2 on a usage or input error. With -update, it rewrites every fingerprint it
+// can, and exits 2 when a route matches several operations.
 package main
 
 import (
@@ -80,19 +82,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "specdrift:", err)
 		return 2
 	}
-	current, err := fingerprints(spec, routes)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "specdrift:", err)
-		return 2
-	}
-
+	current, ambiguities := fingerprints(spec, routes)
 	if *update {
-		if err := os.WriteFile(path, []byte(format(current)), 0o600); err != nil {
-			_, _ = fmt.Fprintln(stderr, "specdrift:", err)
-			return 2
-		}
-		_, _ = fmt.Fprintf(stdout, "wrote %d fingerprints to %s\n", len(current), fingerprintsFile)
-		return 0
+		return rewrite(path, current, ambiguities, stdout, stderr)
 	}
 
 	committed, err := readFingerprints(path)
@@ -100,13 +92,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "specdrift:", err)
 		return 2
 	}
-	report := compare(committed, current)
+	report := compare(committed, current) + ambiguityReport(ambiguities)
 	if report == "" {
 		_, _ = fmt.Fprintf(stdout, "The %d operations the provider calls match their committed fingerprints.\n", len(current))
 		return 0
 	}
 	_, _ = fmt.Fprint(stdout, report)
 	return 1
+}
+
+// rewrite writes the fingerprints file. A route that matches several
+// operations is written with the fingerprint "ambiguous" and named on stderr,
+// and rewrite then returns 2: the other routes are still rewritten.
+func rewrite(path string, current map[string]string, ambiguities map[string][]string, stdout, stderr io.Writer) int {
+	if err := os.WriteFile(path, []byte(format(current)), 0o600); err != nil {
+		_, _ = fmt.Fprintln(stderr, "specdrift:", err)
+		return 2
+	}
+	_, _ = fmt.Fprintf(stdout, "wrote %d fingerprints to %s\n", len(current), fingerprintsFile)
+	for _, r := range slices.Sorted(maps.Keys(ambiguities)) {
+		_, _ = fmt.Fprintf(stderr, "specdrift: %s matches several operations of the specification (%s): written as %s\n", r, strings.Join(ambiguities[r], ", "), ambiguous)
+	}
+	if len(ambiguities) > 0 {
+		return 2
+	}
+	return 0
 }
 
 // checkRoutes fails when the fingerprints file and the fakes list different
@@ -215,27 +225,37 @@ type operation struct {
 	shared any
 }
 
-// fingerprints returns, for each route, the hash of its operation in spec, or
-// "missing" when the specification has none. A route that matches several
-// operations, none of them preferred, is an error.
-func fingerprints(spec map[string]any, routes []string) (map[string]string, error) {
+// ambiguous is the fingerprint of a route that matches several operations of
+// the specification, none of them preferred (see pick).
+const ambiguous = "ambiguous"
+
+// fingerprints returns, for each route, the hash of its operation in spec,
+// "missing" when the specification has none, or ambiguous when pick cannot
+// tell which of several it calls. ambiguities gives the paths of those
+// operations for each ambiguous route.
+func fingerprints(spec map[string]any, routes []string) (fps map[string]string, ambiguities map[string][]string) {
 	paths, _ := spec["paths"].(map[string]any)
 	byShape := operations(paths)
-	out := make(map[string]string, len(routes))
+	fps = make(map[string]string, len(routes))
+	ambiguities = map[string][]string{}
 	for _, r := range routes {
 		method, path, _ := strings.Cut(r, " ")
 		ops, ok := byShape[method+" "+shape(path)]
 		if !ok {
-			out[r] = "missing"
+			fps[r] = "missing"
 			continue
 		}
-		o, err := pick(r, ops)
-		if err != nil {
-			return nil, err
+		o, ok := pick(ops)
+		if !ok {
+			fps[r] = ambiguous
+			for _, o := range ops {
+				ambiguities[r] = append(ambiguities[r], o.path)
+			}
+			continue
 		}
-		out[r] = hash(contract(spec, o))
+		fps[r] = hash(contract(spec, o))
 	}
-	return out, nil
+	return fps, ambiguities
 }
 
 // operations indexes the operations of the specification by method and path
@@ -259,20 +279,16 @@ func operations(paths map[string]any) map[string][]operation {
 // suffix. The specification gives such a suffix to a variant of an operation
 // it documents apart, such as the "#stream" twin of POST /v1/conversations;
 // the provider calls the plain one. Without a single plain path, pick cannot
-// tell, and says so rather than pick one at random.
-func pick(route string, ops []operation) (operation, error) {
+// tell, and returns false rather than pick one at random.
+func pick(ops []operation) (operation, bool) {
 	if len(ops) == 1 {
-		return ops[0], nil
+		return ops[0], true
 	}
 	plain := slices.DeleteFunc(slices.Clone(ops), func(o operation) bool { return strings.Contains(o.path, "#") })
 	if len(plain) == 1 {
-		return plain[0], nil
+		return plain[0], true
 	}
-	paths := make([]string, len(ops))
-	for i, o := range ops {
-		paths[i] = o.path
-	}
-	return operation{}, fmt.Errorf("%s matches %d operations of the specification (%s), and not exactly one of their paths is without a \"#\" suffix", route, len(ops), strings.Join(paths, ", "))
+	return operation{}, false
 }
 
 // contract keeps what a client depends on: parameters, request body, success
@@ -317,14 +333,34 @@ func parameters(spec map[string]any, own, shared any) any {
 	return merged
 }
 
-// parameterKey identifies a parameter by its location and name, through its
-// $ref when it has one.
+// parameterKey identifies a parameter by its location and name, following
+// its chain of $ref. A parameter whose location and name cannot be read (a
+// $ref that does not resolve or loops, an entry that is not an object) is
+// identified by the entry itself, as fmt prints it with its map keys sorted:
+// it overrides, and is overridden by, nothing but an identical entry, so that
+// it never drops out of the fingerprint.
 func parameterKey(spec map[string]any, p any) string {
-	m, _ := p.(map[string]any)
-	if ref, ok := m["$ref"].(string); ok {
-		m, _ = lookup(spec, ref).(map[string]any)
+	target := p
+	for followed := map[string]bool{}; ; {
+		ref, ok := mapOf(target)["$ref"].(string)
+		if !ok || followed[ref] {
+			break
+		}
+		followed[ref] = true
+		target = lookup(spec, ref)
 	}
-	return fmt.Sprintf("%v %v", m["in"], m["name"])
+	in, inOK := mapOf(target)["in"].(string)
+	name, nameOK := mapOf(target)["name"].(string)
+	if inOK && nameOK {
+		return "in " + in + " name " + name
+	}
+	return fmt.Sprintf("entry %#v", p)
+}
+
+// mapOf returns v as an object of the specification, nil when it is not one.
+func mapOf(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
 }
 
 // prose are the keys left out of a fingerprint: they document a contract
@@ -332,14 +368,22 @@ func parameterKey(spec map[string]any, p any) string {
 var prose = map[string]bool{"description": true, "summary": true, "title": true, "example": true, "examples": true}
 
 // names are the keys whose value maps names that the API chooses, not
-// keywords of OpenAPI or JSON Schema, to what they name: properties, status
-// codes, media types, headers, discriminator values. Each of these names is
-// contract, even one spelt like prose (a property "description") or an
+// keywords of OpenAPI or JSON Schema, to what they name. Each of these names
+// is contract, even one spelt like prose (a property "description") or an
 // extension ("x-request-id"), and what it names is resolved as any other
-// node.
+// node. They are the maps of names of JSON Schema 2020-12 (properties,
+// patternProperties, dependentSchemas, dependentRequired, $defs), of its
+// draft 7 predecessors (definitions, dependencies), and of the objects of
+// OpenAPI 3.1 that the contract of an operation holds: its responses, the
+// content of a Parameter, Request Body or Response, the headers and links of
+// a Response, the encoding of a Media Type, the mapping of a Discriminator,
+// the parameters of a Link (an operation's parameters are a list, resolved
+// as such) and the variables of the Server of a Link.
 var names = map[string]bool{
-	"properties": true, "patternProperties": true, "dependentSchemas": true, "dependentRequired": true,
-	"mapping": true, "responses": true, "content": true, "headers": true, "encoding": true,
+	"properties": true, "patternProperties": true, "dependentSchemas": true, "dependentRequired": true, "$defs": true,
+	"definitions": true, "dependencies": true,
+	"responses": true, "content": true, "headers": true, "links": true, "encoding": true,
+	"mapping": true, "parameters": true, "variables": true,
 }
 
 // literals are the keys whose value is data of the API, kept as written:
@@ -464,12 +508,15 @@ func readFingerprints(path string) (map[string]string, error) {
 	return out, nil
 }
 
-// compare returns the Markdown report of what differs, or "" when nothing does.
+// compare returns the Markdown report of what differs, or "" when nothing
+// does. An ambiguous route is left to ambiguityReport, which names the
+// operations it matches.
 func compare(committed, current map[string]string) string {
 	var changed, missing, added, dropped []string
 	for _, r := range slices.Sorted(maps.Keys(current)) {
 		old, known := committed[r]
 		switch {
+		case current[r] == ambiguous:
 		case current[r] == "missing" && old != "missing":
 			missing = append(missing, r)
 		case !known:
@@ -491,6 +538,23 @@ func compare(committed, current map[string]string) string {
 	section(&b, "No longer in the specification: the provider calls an operation Mistral no longer documents", missing)
 	section(&b, "Served by a fake but without a committed fingerprint: run specdrift -update", added)
 	section(&b, "Fingerprinted but no longer served by any fake: run specdrift -update", dropped)
+	return b.String()
+}
+
+// ambiguityReport returns the Markdown section of the routes that match
+// several operations of the specification, with their paths, or "" when there
+// is none. Such a route is reported on every run, whatever the fingerprints
+// file holds, until pick learns which operation the provider calls.
+func ambiguityReport(ambiguities map[string][]string) string {
+	if len(ambiguities) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Matches several operations of the specification: teach pick in tools/specdrift/main.go which one the provider calls\n\n")
+	for _, r := range slices.Sorted(maps.Keys(ambiguities)) {
+		fmt.Fprintf(&b, "- `%s`: `%s`\n", r, strings.Join(ambiguities[r], "`, `"))
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 

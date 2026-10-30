@@ -30,9 +30,9 @@ func loadText(t *testing.T, text string) map[string]any {
 // fingerprintOf returns the fingerprint of route in the specification text.
 func fingerprintOf(t *testing.T, text, route string) string {
 	t.Helper()
-	fps, err := fingerprints(loadText(t, text), []string{route})
-	if err != nil {
-		t.Fatal(err)
+	fps, ambiguities := fingerprints(loadText(t, text), []string{route})
+	if len(ambiguities) > 0 {
+		t.Fatalf("%s is ambiguous: %v", route, ambiguities)
 	}
 	if fps[route] == "missing" {
 		t.Fatalf("%s is missing from the specification", route)
@@ -51,8 +51,9 @@ func edit(t *testing.T, text, old, replacement string) string {
 }
 
 // specNames has, in the response of one operation, names that are spelt like
-// prose or extensions: properties, a header, a discriminator value, and a key
-// of a default value.
+// prose or extensions: properties, a header, a link, its parameter and its
+// server variable, $defs, definitions and dependencies, a discriminator value,
+// and a key of a default value.
 const specNames = `
 openapi: 3.1.0
 paths:
@@ -62,12 +63,20 @@ paths:
         "200":
           headers:
             x-request-id: {schema: {type: string}}
+          links:
+            x-next:
+              operationId: getLibrary
+              parameters: {description: "$response.body#/description"}
+              server: {url: "https://{x-region}.mistral.ai", variables: {x-region: {default: eu}}}
           content: {application/json: {schema: {$ref: "#/components/schemas/Library"}}}
 components:
   schemas:
     Library:
       type: object
       title: Library
+      $defs: {title: {type: string}}
+      definitions: {x-legacy: {type: string}}
+      dependencies: {title: [description]}
       properties:
         description: {type: string, description: What the library holds.}
         title: {type: string}
@@ -96,6 +105,12 @@ func TestNamesSpeltLikeProseCount(t *testing.T) {
 		{"header x-request-id renamed", "x-request-id:", "x-trace-id:", true},
 		{"discriminator value renamed", "mapping: {summary:", "mapping: {abstract:", true},
 		{"key of a default value changed", "default: {title: asc}", "default: {title: desc}", true},
+		{"link x-next renamed", "x-next:", "x-following:", true},
+		{"link parameter renamed", "parameters: {description:", "parameters: {summary:", true},
+		{"server variable renamed", "variables: {x-region:", "variables: {x-zone:", true},
+		{"$def title retyped", "$defs: {title: {type: string}}", "$defs: {title: {type: integer}}", true},
+		{"definition x-legacy removed", "definitions: {x-legacy: {type: string}}", "definitions: {}", true},
+		{"dependency of title removed", "dependencies: {title: [description]}", "dependencies: {}", true},
 		{"description of a property reworded", "What the library holds.", "The documents of the library.", false},
 		{"title of a schema renamed", "title: Library", "title: DocumentLibrary", false},
 	} {
@@ -132,9 +147,9 @@ func TestPlainPathWinsOverItsTwin(t *testing.T) {
 	want := fingerprintOf(t, plainOnly, route)
 	spec := loadText(t, specStream)
 	for range 64 {
-		fps, err := fingerprints(spec, []string{route})
-		if err != nil {
-			t.Fatal(err)
+		fps, ambiguities := fingerprints(spec, []string{route})
+		if len(ambiguities) > 0 {
+			t.Fatalf("%s is ambiguous: %v", route, ambiguities)
 		}
 		if fps[route] != want {
 			t.Fatalf("fingerprint %s, want %s, that of the plain path", fps[route], want)
@@ -142,31 +157,63 @@ func TestPlainPathWinsOverItsTwin(t *testing.T) {
 	}
 }
 
-// TestAmbiguousRouteIsAnError checks that a route matching several
-// operations, none of them the only one without a suffix, is an input error
-// that names them, from fingerprints and from the command.
-func TestAmbiguousRouteIsAnError(t *testing.T) {
-	t.Parallel()
-	spec := `
+// specAmbiguous has two operations for DELETE /v1/connectors/{id}, neither
+// of them without a suffix, besides the one operation of GET
+// /v1/agents/{agent_id}: the two routes of repo.
+const specAmbiguous = `
 openapi: 3.1.0
 paths:
+  /v1/agents/{agent_id}:
+    get:
+      responses: {"200": {content: {application/json: {schema: {type: object, properties: {id: {type: string}}}}}}}
   /v1/connectors/{connector_id}#id:
     delete: {responses: {"204": {description: Deleted}}}
   /v1/connectors/{connector_name}#name:
     delete: {responses: {"204": {description: Deleted}}}
 `
-	_, err := fingerprints(loadText(t, spec), []string{"DELETE /v1/connectors/{id}"})
-	want := "DELETE /v1/connectors/{id} matches 2 operations of the specification (/v1/connectors/{connector_id}#id, /v1/connectors/{connector_name}#name)"
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("error = %v, want one containing %q", err, want)
-	}
 
+// TestAmbiguousRouteIsReported checks that a route matching several
+// operations, none of them the only one without a suffix, is named with
+// their paths and fails the command, while the other routes are still
+// fingerprinted by -update and checked.
+func TestAmbiguousRouteIsReported(t *testing.T) {
+	t.Parallel()
 	root, specPath := repo(t)
-	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+	writeSpec := func(text string) {
+		t.Helper()
+		if err := os.WriteFile(specPath, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSpec(specAmbiguous)
+	code, out := runCmd("-spec", specPath, "-root", root, "-update")
+	if code != 2 || !strings.Contains(out, "DELETE /v1/connectors/{id} matches several operations of the specification (/v1/connectors/{connector_id}#id, /v1/connectors/{connector_name}#name)") {
+		t.Errorf("update: %d %s", code, out)
+	}
+	written, err := readFingerprints(filepath.Join(root, fingerprintsFile))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if code, out := runCmd("-spec", specPath, "-root", root, "-update"); code != 2 || !strings.Contains(out, want) {
-		t.Errorf("update: %d %s", code, out)
+	if want := fingerprintOf(t, specAmbiguous, "GET /v1/agents/{agent_id}"); written["GET /v1/agents/{agent_id}"] != want || written["DELETE /v1/connectors/{id}"] != ambiguous {
+		t.Errorf("update wrote %v, want GET at %s and DELETE %s", written, want, ambiguous)
+	}
+
+	// A route fingerprinted before the specification made it ambiguous is
+	// reported once, as ambiguous, not also as changed.
+	written["DELETE /v1/connectors/{id}"] = "0123456789abcdef"
+	if err := os.WriteFile(filepath.Join(root, fingerprintsFile), []byte(format(written)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const ambiguity = "- `DELETE /v1/connectors/{id}`: `/v1/connectors/{connector_id}#id`, `/v1/connectors/{connector_name}#name`"
+	code, out = runCmd("-spec", specPath, "-root", root)
+	if code != 1 || !strings.Contains(out, ambiguity) || strings.Contains(out, "### Changed") {
+		t.Errorf("check, the ambiguity alone: %d %s", code, out)
+	}
+
+	writeSpec(edit(t, specAmbiguous, "id: {type: string}", "id: {type: integer}"))
+	code, out = runCmd("-spec", specPath, "-root", root)
+	if code != 1 || !strings.Contains(out, ambiguity) || !strings.Contains(out, "### Changed in the specification: check the client and the fake against the new contract\n\n- `GET /v1/agents/{agent_id}`\n\n") {
+		t.Errorf("check, a drift beside the ambiguity: %d %s", code, out)
 	}
 }
 
@@ -270,5 +317,64 @@ func TestPathItemParametersCount(t *testing.T) {
 	after := fingerprintOf(t, edit(t, overridden, "Limit: {name: limit, in: query, schema: {type: integer}}", "Limit: {name: limit, in: query, schema: {type: string}}"), route)
 	if before != after {
 		t.Error("a parameter of the path item that the operation overrides counts")
+	}
+}
+
+// TestUnreadableParametersCount checks that each parameter whose location
+// and name cannot be read, behind a $ref that does not resolve or that
+// loops, counts in the fingerprint rather than being taken as overridden by
+// another such parameter.
+func TestUnreadableParametersCount(t *testing.T) {
+	t.Parallel()
+	const route = "GET /v1/libraries"
+	spec := `
+openapi: 3.1.0
+paths:
+  /v1/libraries:
+    parameters:
+      - {$ref: "#/components/parameters/GoneA"}
+      - {$ref: "#/components/parameters/Loop"}
+    get:
+      parameters:
+        - {$ref: "#/components/parameters/GoneB"}
+      responses: {"200": {content: {application/json: {schema: {type: array}}}}}
+components:
+  parameters:
+    Loop: {$ref: "#/components/parameters/Loop"}
+`
+	base := fingerprintOf(t, spec, route)
+	if got := fingerprintOf(t, edit(t, spec, "parameters/GoneA", "parameters/GoneC"), route); got == base {
+		t.Error("a path item parameter whose $ref does not resolve does not count")
+	}
+	if got := fingerprintOf(t, edit(t, spec, "      - {$ref: \"#/components/parameters/Loop\"}\n", ""), route); got == base {
+		t.Error("a path item parameter whose $ref loops does not count")
+	}
+}
+
+// TestChainedParameterReferences checks that the location and name of a
+// parameter are read at the end of its chain of $ref, so that an operation's
+// parameter overrides the path item's.
+func TestChainedParameterReferences(t *testing.T) {
+	t.Parallel()
+	const route = "GET /v1/libraries"
+	spec := `
+openapi: 3.1.0
+paths:
+  /v1/libraries:
+    parameters:
+      - {$ref: "#/components/parameters/Alias"}
+    get:
+      parameters:
+        - {name: limit, in: query, schema: {type: integer}}
+      responses: {"200": {content: {application/json: {schema: {type: array}}}}}
+components:
+  parameters:
+    Alias: {$ref: "#/components/parameters/Limit"}
+    Limit: {name: limit, in: query, schema: {type: integer}}
+`
+	before := fingerprintOf(t, spec, route)
+	after := fingerprintOf(t, edit(t, spec, "Limit: {name: limit, in: query, schema: {type: integer}}", "Limit: {name: limit, in: query, schema: {type: string}}"), route)
+	if before != after {
+		t.Error("a path item parameter that the operation overrides, through two $ref, counts")
 	}
 }
