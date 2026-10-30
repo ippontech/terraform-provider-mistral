@@ -19,7 +19,7 @@ This resource is meant for a curated corpus: a few dozen documents kept in git n
 
 ## Content and metadata
 
-The API cannot change the content of a document. A new `source`, or a new `source_hash`, replaces the document: the provider deletes it and uploads the file again, which the library processes, and bills, again. Terraform does not read the file to plan: set `source_hash = filesha256(...)`, or a change of the content goes unnoticed. `size` is the size the API reports; it is not compared with the local file, since a hash catches every change and a size does not.
+The API cannot change the content of a document. A new `source`, or a new `source_hash`, replaces the document: the provider deletes it and uploads the file again, which the library processes, and bills, again. Terraform does not read the file to plan: set `source_hash = filesha256(...)`, or a change of the content goes unnoticed. Adding `source_hash` to a document uploaded without one replaces it too, even when the file has not changed, since nothing tells whether it changed after the upload; removing `source_hash` changes nothing at Mistral. `size` is the size the API reports; it is not compared with the local file, since a hash catches every change and a size does not.
 
 `name`, `attributes` and `expires_at` change in place. `name` defaults to the file name of `source`. `attributes` holds strings: a value set outside Terraform as another JSON type, such as a number, reads as its JSON text, and an update sends it back as a string.
 
@@ -71,7 +71,7 @@ resource "mistral_library_document" "docs" {
 - `attributes` (Map of String) Free-form string attributes of the document. A value set outside Terraform as another JSON type reads as its JSON text.
 - `expires_at` (String) When the API deletes the document, in RFC 3339 format, such as `2027-01-01T00:00:00Z`. Once it has passed, the document reads as gone, and a plan that would upload it again fails until `expires_at` moves.
 - `name` (String) The name of the document. Defaults to the file name of `source`.
-- `source_hash` (String) A hash of the file, such as `filesha256("${path.module}/docs/pricing.pdf")`. Set it so that a change of the content of the file replaces the document: Terraform does not read the file otherwise.
+- `source_hash` (String) A hash of the file, such as `filesha256("${path.module}/docs/pricing.pdf")`. Set it so that a change of the content of the file replaces the document: Terraform does not read the file otherwise. Adding it to a document uploaded without it replaces the document too, except on the first apply after an import.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only

@@ -96,8 +96,8 @@ func (r *LibraryDocumentResource) Schema(ctx context.Context, _ resource.SchemaR
 	keep := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	keepInt := []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}
 	replaceFile := []planmodifier.String{stringplanmodifier.RequiresReplaceIf(replaceUnlessImported,
-		"Changing it replaces the document, unless the state has no value yet (after an import).",
-		"Changing it replaces the document, unless the state has no value yet (after an import).")}
+		"Changing or adding it replaces the document, except on the first apply after an import, which records it in place.",
+		"Changing or adding it replaces the document, except on the first apply after an import, which records it in place.")}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Uploads a local file to a library as a document, and waits until the library has processed it.",
 		Attributes: map[string]schema.Attribute{
@@ -127,7 +127,8 @@ func (r *LibraryDocumentResource) Schema(ctx context.Context, _ resource.SchemaR
 			"source_hash": schema.StringAttribute{
 				Optional: true,
 				MarkdownDescription: "A hash of the file, such as `filesha256(\"${path.module}/docs/pricing.pdf\")`. " +
-					"Set it so that a change of the content of the file replaces the document: Terraform does not read the file otherwise.",
+					"Set it so that a change of the content of the file replaces the document: Terraform does not read the file otherwise. " +
+					"Adding it to a document uploaded without it replaces the document too, except on the first apply after an import.",
 				PlanModifiers: replaceFile,
 				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
