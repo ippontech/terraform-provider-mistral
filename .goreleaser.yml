@@ -97,7 +97,7 @@ changelog:
       regexp: '^perf(\([^)]+\))??:.+$'
       order: 3
     - title: Reverts
-      regexp: '^(Revert ".+"|revert(\([^)]+\))??:.+)$'
+      regexp: '^(Revert ".+|revert(\([^)]+\))??:.+)$'
       order: 4
     - title: Other changes
       order: 999
