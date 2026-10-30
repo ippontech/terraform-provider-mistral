@@ -10,7 +10,7 @@ Nothing is released while the repository is private: the release job skips, sinc
 2. Tag the commit of `main` and push the tag: `git tag -a v0.4.0 -m v0.4.0 <sha> && git push origin v0.4.0`. The tag ruleset lets repository admins only create a version tag, and nobody move or delete one.
 3. Approve the release job (*Approving a release* below), then check the GitHub release: its archives, `SHA256SUMS`, the signature and the notes.
 
-The release notes group the commits by type (`.goreleaser.yml`, `changelog`): breaking changes (`!` after the type), features, fixes, performance, then the rest; `chore`, `ci`, `test` and `style` are left out. Every pull request checks the format (`conventional-commits.yml`), so a commit cannot land outside these groups.
+The release notes group the commits by type (`.goreleaser.yml`, `changelog`): breaking changes (`!` after the type), features, fixes, performance, reverts (GitHub's `Revert "..."` subjects and `revert:`), then the rest; `chore`, `ci`, `test` and `style` are left out, and so are their reverts. Every pull request checks the format (`conventional-commits.yml`), so a commit cannot land outside these groups.
 
 ## Approving a release
 
