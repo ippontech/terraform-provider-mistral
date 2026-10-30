@@ -36,7 +36,14 @@ generate:
 	cd tools; go generate -tags generate ./...
 
 # COVERPROFILE=<file> also writes a coverage profile (the CI test job does).
+# The unit tests only, whatever the environment: TF_ACC is emptied, which
+# terraform-plugin-testing and internal/acctest read as unset, so the tests
+# of the live API skip; they run through make testacc. And dummy keys stand in
+# for the developer's: a test against the fake must never read them
+# (providertest.ProviderFactories sets provider.WithoutEnvironment), and one
+# that did would fail, or at worst send these values to the fake.
 test:
+	TF_ACC= MISTRAL_API_KEY=env-key-must-not-be-read MISTRAL_ADMIN_API_KEY=env-admin-key-must-not-be-read \
 	go test -v -race -shuffle=on -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=300s -parallel=10 ./...
 
 # Unit tests, then the coverage gate of the CI coverage job (.coverage.json,
@@ -66,8 +73,12 @@ mutation:
 	go build -C tools -o $(CURDIR)/.gobin/gremlins github.com/go-gremlins/gremlins/cmd/gremlins
 	GOFLAGS=-count=1 .gobin/gremlins unleash --invert-logical --invert-loopctrl --workers 2 --timeout-coefficient 10 $(PKG)
 
+# The acceptance tests only, by name: with the real keys in the environment,
+# the unit tests would gain nothing from running again, and one that read the
+# environment would send a real key to the fake. Every test of the live API
+# is named TestAcc<Name> (internal/acctest/naming_test.go checks it).
 testacc:
-	TF_ACC=1 go test -v -cover -timeout 120m ./...
+	TF_ACC=1 go test -v -cover -timeout 120m -run '^TestAcc[A-Z]' ./...
 
 .dev.tfrc:
 	@GOBIN=$$(go env GOBIN); \

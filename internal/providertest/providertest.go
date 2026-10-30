@@ -34,12 +34,15 @@ var RetryPolicy = client.RetryPolicy{
 }
 
 // ProviderFactories returns the factories of a provider whose client calls
-// srv. No environment variable is read for the server URL, so tests can run
-// in parallel.
+// srv. The provider reads no environment variable (WithoutEnvironment): tests
+// need no t.Setenv for the server URL, so they can run in parallel, and a
+// configuration that leaves a key empty never takes MISTRAL_API_KEY or
+// MISTRAL_ADMIN_API_KEY, the developer's or the acceptance job's, which runs
+// with the real keys.
 func ProviderFactories(srv *sdktest.Server) map[string]func() (tfprotov6.ProviderServer, error) {
 	return map[string]func() (tfprotov6.ProviderServer, error){
-		"mistral": providerserver.NewProtocol6WithError(
-			provider.New("test", provider.WithServerURL(srv.URL), provider.WithRetryPolicy(RetryPolicy))()),
+		"mistral": providerserver.NewProtocol6WithError(provider.New("test",
+			provider.WithServerURL(srv.URL), provider.WithRetryPolicy(RetryPolicy), provider.WithoutEnvironment())()),
 	}
 }
 

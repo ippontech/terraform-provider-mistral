@@ -4,6 +4,7 @@
 package providertest_test
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -31,6 +32,32 @@ resource "terraform_data" "x" {
 				PostApplyPostRefresh: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 			},
 		}},
+	})
+	srv.AssertCalled("", 0)
+}
+
+// TestProviderFactoriesIgnoreTheEnvironment runs a configuration without
+// keys with both keys in the environment: the data sources still miss their
+// credential, and nothing reaches the fake. It cannot call t.Parallel, since
+// t.Setenv refuses a parallel test; Go runs it before the parallel tests of
+// the package, and restores the environment when it ends.
+func TestProviderFactoriesIgnoreTheEnvironment(t *testing.T) {
+	t.Setenv("MISTRAL_API_KEY", "env-key-must-not-be-read")
+	t.Setenv("MISTRAL_ADMIN_API_KEY", "env-admin-key-must-not-be-read")
+	srv := sdktest.NewServer(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(srv),
+		Steps: []resource.TestStep{
+			{
+				Config:      "provider \"mistral\" {}\n\ndata \"mistral_models\" \"all\" {}\n",
+				ExpectError: regexp.MustCompile(`Missing\s+Mistral\s+credential(.|\n)*"api_key"(.|\n)*ignores\s+the\s+environment`),
+			},
+			{
+				Config:      "provider \"mistral\" {}\n\ndata \"mistral_workspaces\" \"all\" {}\n",
+				ExpectError: regexp.MustCompile(`Missing\s+Mistral\s+credential(.|\n)*"admin_api_key"(.|\n)*ignores\s+the\s+environment`),
+			},
+		},
 	})
 	srv.AssertCalled("", 0)
 }

@@ -92,6 +92,9 @@ func TestConfigureWithoutCredentialSucceeds(t *testing.T) {
 	if pd.ServerURL != DefaultServerURL {
 		t.Errorf("ServerURL = %q, want %q", pd.ServerURL, DefaultServerURL)
 	}
+	if pd.EnvironmentIgnored {
+		t.Error("EnvironmentIgnored is set without WithoutEnvironment")
+	}
 	if pd.UserAgent != "terraform-provider-mistral/test" {
 		t.Errorf("UserAgent = %q", pd.UserAgent)
 	}
@@ -131,6 +134,26 @@ func TestConfigureReadsEnvironment(t *testing.T) {
 	}
 	if pd.ServerURL != "https://mistral.example.com" {
 		t.Errorf("ServerURL = %q, want the trailing slash removed", pd.ServerURL)
+	}
+}
+
+// WithoutEnvironment, which internal/providertest sets for every fake test,
+// leaves the keys empty and the server URL at its default, whatever the
+// environment holds, and still takes the configured values.
+func TestWithoutEnvironmentIgnoresTheEnvironment(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envAPIKey, "env-key")
+	t.Setenv(envAdminAPIKey, "env-admin")
+	t.Setenv(envServerURL, "https://env.example.com")
+
+	pd := providerData(t, configure(t, nil, WithoutEnvironment()))
+	if pd.APIKey != "" || pd.AdminAPIKey != "" || pd.ServerURL != DefaultServerURL || !pd.EnvironmentIgnored {
+		t.Errorf("got %+v, want no key, the default server URL, and the environment marked as ignored", *pd)
+	}
+
+	pd = providerData(t, configure(t, map[string]tftypes.Value{"api_key": str("config-key")}, WithoutEnvironment()))
+	if pd.APIKey != "config-key" || pd.AdminAPIKey != "" {
+		t.Errorf("credentials = %q, %q, want the configured key only", pd.APIKey, pd.AdminAPIKey)
 	}
 }
 
@@ -181,6 +204,7 @@ func TestConfigureValidatesServerURL(t *testing.T) {
 		"http on 127.0.0.1":    {url: "http://127.0.0.1:8080"},
 		"http on ::1":          {url: "http://[::1]:8080"},
 		"http elsewhere":       {url: "http://api.mistral.ai", wantErr: "plain HTTP"},
+		"http on another IP":   {url: "http://10.0.0.1:8080", wantErr: "plain HTTP"},
 		"relative":             {url: "api.mistral.ai", wantErr: "not an absolute URL"},
 		"other scheme":         {url: "ftp://api.mistral.ai", wantErr: "must use https"},
 		"query":                {url: "https://api.mistral.ai?x=1", wantErr: "query or a fragment"},

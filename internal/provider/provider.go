@@ -52,6 +52,10 @@ type MistralProvider struct {
 	// retry is the client's retry policy: client.DefaultRetryPolicy, unless
 	// a test set another with WithRetryPolicy.
 	retry client.RetryPolicy
+
+	// ignoreEnvironment, set by WithoutEnvironment, keeps the environment
+	// variables out of Configure. False in every binary users run.
+	ignoreEnvironment bool
 }
 
 // Option changes how New builds the provider. Options are for tests only:
@@ -73,6 +77,17 @@ func WithServerURL(serverURL string) Option {
 func WithRetryPolicy(policy client.RetryPolicy) Option {
 	return func(p *MistralProvider) {
 		p.retry = policy
+	}
+}
+
+// WithoutEnvironment makes Configure ignore MISTRAL_API_KEY,
+// MISTRAL_ADMIN_API_KEY and MISTRAL_SERVER_URL, so a test against the fake
+// API never takes the credential of the developer or of the acceptance job,
+// whatever key its configuration leaves empty (internal/providertest always
+// sets it).
+func WithoutEnvironment() Option {
+	return func(p *MistralProvider) {
+		p.ignoreEnvironment = true
 	}
 }
 
@@ -144,7 +159,7 @@ func (p *MistralProvider) Configure(ctx context.Context, req provider.ConfigureR
 	serverURL := p.serverURL
 	if serverURL == "" {
 		var err error
-		serverURL, err = validateServerURL(resolve(data.ServerURL, envServerURL, DefaultServerURL))
+		serverURL, err = validateServerURL(p.resolve(data.ServerURL, envServerURL, DefaultServerURL))
 		if err != nil {
 			resp.Diagnostics.AddAttributeError(path.Root("server_url"), "Invalid server URL", err.Error())
 			return
@@ -153,9 +168,11 @@ func (p *MistralProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	pd := &providerdata.ProviderData{
 		ServerURL:   strings.TrimRight(serverURL, "/"),
-		APIKey:      resolve(data.APIKey, envAPIKey, ""),
-		AdminAPIKey: resolve(data.AdminAPIKey, envAdminAPIKey, ""),
+		APIKey:      p.resolve(data.APIKey, envAPIKey, ""),
+		AdminAPIKey: p.resolve(data.AdminAPIKey, envAdminAPIKey, ""),
 		UserAgent:   "terraform-provider-mistral/" + p.version,
+
+		EnvironmentIgnored: p.ignoreEnvironment,
 	}
 	pd.Client = client.New(client.Config{
 		BaseURL:     pd.ServerURL,
@@ -168,11 +185,15 @@ func (p *MistralProvider) Configure(ctx context.Context, req provider.ConfigureR
 	resp.DataSourceData = pd
 }
 
-// resolve returns the configured value, else the environment variable, else
-// fallback.
-func resolve(configured types.String, envVar, fallback string) string {
+// resolve returns the configured value, else the environment variable
+// unless WithoutEnvironment set ignoreEnvironment, else fallback. An empty
+// configured value counts as unset.
+func (p *MistralProvider) resolve(configured types.String, envVar, fallback string) string {
 	if v := configured.ValueString(); v != "" {
 		return v
+	}
+	if p.ignoreEnvironment {
+		return fallback
 	}
 	if v := os.Getenv(envVar); v != "" {
 		return v
