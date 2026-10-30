@@ -145,17 +145,26 @@ func (r *APIKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 }
 
 // replaceUnlessImported replaces the key when user_id or expiration changes,
-// except from null. Neither is read back, user_id because the list does not
-// return it and expiration because the API may shorten it, so both are null
-// after an import: the first apply then records the configured value in
-// place (Update) instead of replacing a key that applications use.
+// except on the first apply after an import. Neither is read back, user_id
+// because the list does not return it and expiration because the API may
+// shorten it, so both are null after an import: that apply records the
+// configured values in place (Update) instead of replacing a key that
+// applications use.
+//
+// A null value alone does not mark an import: a key created without an
+// expiration has none either, and recording one in place would leave the key
+// without an expiry at Mistral. The import marker is a null user_id in the
+// state: the argument is required, so every create stores it, and only an
+// import leaves it null until the first apply records it.
 func replaceUnlessImported() planmodifier.String {
 	return stringplanmodifier.RequiresReplaceIf(
-		func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
-			resp.RequiresReplace = !req.StateValue.IsNull()
+		func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+			var userID types.String
+			resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("user_id"), &userID)...)
+			resp.RequiresReplace = !userID.IsNull()
 		},
-		"Changing the value replaces the key, unless the state has none, as after an import.",
-		"Changing the value replaces the key, unless the state has none, as after an import.",
+		"Changing the value replaces the key, except on the first apply after an import, which records it in place.",
+		"Changing the value replaces the key, except on the first apply after an import, which records it in place.",
 	)
 }
 
@@ -212,9 +221,9 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(writeAPIKey(ctx, apiKeyState(*k, state), &resp.State, resp.Identity)...)
 }
 
-// Update only records user_id or expiration after an import: every other
-// change replaces the key (replaceUnlessImported), and the API has no update
-// to call.
+// Update only records user_id and expiration on the first apply after an
+// import: every other change replaces the key (replaceUnlessImported), and
+// the API has no update to call.
 func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state apiKeyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)

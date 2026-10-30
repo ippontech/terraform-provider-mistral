@@ -173,7 +173,7 @@ resource "mistral_api_key" "unlimited" {
 func TestAPIKeyResourceImportsAKeyCreatedOutsideTerraform(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
-	id := f.seed("ci", workspaceID)
+	id := f.seed("ci")
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
@@ -206,6 +206,74 @@ resource "mistral_api_key" "ci" {
 	})
 	f.AssertCalled(routeCreate, 1)
 	f.AssertCalled(routeDelete, 2)
+}
+
+// Adding an expiration to a key created without one replaces the key: the
+// API cannot set an expiry on an existing key, so recording the date in place
+// would leave a key that never expires.
+func TestAPIKeyResourceReplacesAKeyWhenAnExpirationIsAdded(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config:           keyConfig(""),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.Null()),
+				},
+			},
+			{
+				Config:           keyConfig(`  expiration = "2027-06-30"`),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionDestroyBeforeCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("key"), knownvalue.StringExact("fake-secret-0002")),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration"), knownvalue.StringExact("2027-06-30")),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2027-06-30")),
+				},
+			},
+		},
+	})
+	f.AssertJSONBodies(routeCreate, createBody("null", "null"), createBody("null", `"2027-06-30"`))
+	// The replacement, then the destroy at the end of the test.
+	f.AssertCalled(routeDelete, 2)
+}
+
+// Only the first apply after an import records an expiration in place: once
+// it has recorded user_id, adding an expiration replaces the key, as for a
+// key Terraform created.
+func TestAPIKeyResourceReplacesOnAnExpirationAddedAfterTheImport(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seed("ci")
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config:           keyConfig(`  name = "ci"`) + "import {\n  to = mistral_api_key.ci\n  id = \"" + id + "\"\n}\n",
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionUpdate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("user_id"), knownvalue.StringExact(userID)),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration"), knownvalue.Null()),
+				},
+			},
+			{
+				Config:           keyConfig("  name       = \"ci\"\n  expiration = \"2027-06-30\""),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionDestroyBeforeCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("key"), knownvalue.StringExact("fake-secret-0001")),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2027-06-30")),
+				},
+			},
+		},
+	})
+	f.AssertJSONBodies(routeCreate, createBody(`"ci"`, `"2027-06-30"`))
+	if got := f.Requests(routeDelete)[0].Path; got != "/v1/admin/api-keys/"+id {
+		t.Errorf("the replacement deleted %s, want the imported key %s", got, id)
+	}
 }
 
 // A key deleted outside Terraform plans a create.
@@ -259,7 +327,7 @@ func TestAPIKeyResourceWalksThePagesOfTheList(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
 	for i := range 120 {
-		f.seed(fmt.Sprintf("ci-%03d", i), workspaceID)
+		f.seed(fmt.Sprintf("ci-%03d", i))
 	}
 
 	resource.UnitTest(t, resource.TestCase{
@@ -364,7 +432,7 @@ func TestAPIKeyResourceValidatesItsArguments(t *testing.T) {
 func TestAPIKeyResourceImportOfAMissingKey(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
-	f.seed("other", workspaceID)
+	f.seed("other")
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),

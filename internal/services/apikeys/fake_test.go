@@ -135,8 +135,9 @@ func (f *fake) setPolicy(maxDays int) {
 	f.maxDays = maxDays
 }
 
-// seed stores a key created outside Terraform and returns its ID.
-func (f *fake) seed(name, workspaceID string) string {
+// seed stores a key of workspaceID created outside Terraform and returns its
+// ID.
+func (f *fake) seed(name string) string {
 	return f.keys.Create(map[string]any{
 		"name": name, "workspace_id": workspaceID, "user_id": "u-studio", "secret": "fake-studio-" + name,
 		"hidden_key": "************" + name, "created_at": today.Format(time.RFC3339), "expiration_date": nil,
