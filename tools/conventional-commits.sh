@@ -53,7 +53,12 @@ check() {
 #   with commit.cleanup=scissors).
 #
 # The --cleanup option of git commit does not reach the hook: this follows
-# commit.cleanup only.
+# commit.cleanup only. And with core.commentChar=auto, git comments with the
+# first of #;@!$%^&|: that starts no line of the message before the editor
+# opens (a template, an amended message), which the hook cannot see, while
+# git stripspace takes #: after a template whose lines start with #, git
+# keeps them, and the subject checked here can differ from the one
+# committed. The commit-messages job of CI checks the subjects committed.
 read_subject() {
 	local file=$1 mode editor=true comment text
 	mode=$(git config commit.cleanup || echo default)

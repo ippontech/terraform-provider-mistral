@@ -45,7 +45,10 @@ tmp=$(mktemp)
 # Outside any repository, so that the configuration of the checkout, such as
 # its core.commentChar, does not reach the cases.
 outside=$(mktemp -d)
-trap 'rm -f "${tmp}"; rm -rf "${outside}"' EXIT
+# The scratch repository of the range mode, below.
+repo=$(mktemp -d)
+# One trap for every temporary file: a second trap would replace this one.
+trap 'rm -f "${tmp}"; rm -rf "${outside}" "${repo}"' EXIT
 
 # expect_message <accept|reject> <case> <line>... (the lines of the message
 # file; GIT_CONFIG_* and GIT_EDITOR in the environment reach the script)
@@ -92,9 +95,6 @@ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.cleanup GIT_CONFIG_VALUE_0=strip \
 
 # The range mode, on a scratch repository: a merge commit and a bad subject
 # fail, a linear range of valid commits passes.
-repo=$(mktemp -d)
-trap 'rm -f "${tmp}"; rm -rf "${repo}"' EXIT
-script=$(realpath "${script}")
 (
 	cd "${repo}" || exit 1
 	git init -q -b main
