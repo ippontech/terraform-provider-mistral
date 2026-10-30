@@ -38,14 +38,18 @@ repos:
         entry: mise exec -- poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
         pass_filenames: false
         always_run: true
-      # The audits of the zizmor CI job, offline: the online ones (impostor
-      # commits behind a pinned SHA) need a GitHub token and run in CI only.
+      # The audits of the zizmor CI job that need no network. --offline turns
+      # off the ones that query GitHub with a token, which run in CI only:
+      # impostor-commit, ref-confusion, known-vulnerable-actions,
+      # stale-action-refs and ref-version-mismatch (zizmor 1.31.1, -v lists
+      # the ones it skips). Also run when mise.toml changes, so that the
+      # commit that bumps zizmor audits the workflows with the new version.
       - id: zizmor
         name: zizmor
         language: system
         entry: mise exec -- zizmor --offline .
         pass_filenames: false
-        files: ^\.github/
+        files: ^(\.github/|mise\.toml$)
       # Secrets in the staged changes, with the rules of .gitleaks.toml, at the
       # version pinned in mise.toml (the gitleaks workflow scans the commits of
       # a pull request). A deliberate fake in a test takes `gitleaks:allow` at
