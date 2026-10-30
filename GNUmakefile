@@ -71,8 +71,12 @@ mutation:
 	go build -C tools -o $(CURDIR)/.gobin/gremlins github.com/go-gremlins/gremlins/cmd/gremlins
 	GOFLAGS=-count=1 .gobin/gremlins unleash --invert-logical --invert-loopctrl --workers 2 --timeout-coefficient 10 $(PKG)
 
+# The acceptance tests only, by name: with the real keys in the environment,
+# the unit tests would gain nothing from running again, and one that read the
+# environment would send a real key to the fake. Every test of the live API
+# is named TestAcc<Name> (internal/acctest/naming_test.go checks it).
 testacc:
-	TF_ACC=1 go test -v -cover -timeout 120m ./...
+	TF_ACC=1 go test -v -cover -timeout 120m -run '^TestAcc[A-Z]' ./...
 
 .dev.tfrc:
 	@GOBIN=$$(go env GOBIN); \
