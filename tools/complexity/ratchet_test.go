@@ -5,6 +5,7 @@ package main
 
 import (
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -436,6 +437,118 @@ func TestKeysStableWhenANameRepeats(t *testing.T) {
 			r := evaluate(base, head, fixtureLimit)
 			if !r.passed() || len(r.entries) != 1 || r.entries[0].key != tc.key || r.entries[0].state != unchanged {
 				t.Errorf("entries %+v, want %s alone, unchanged", r.entries, tc.key)
+			}
+		})
+	}
+}
+
+// initScoring returns the source of an init function that holds n nested
+// ifs, so that it scores 1+2+...+n, then the statements of extra.
+func initScoring(n int, extra string) string {
+	return "\nfunc init() {\n" + strings.Repeat("if x {\n", n) + strings.Repeat("}\n", n) + extra + "}\n"
+}
+
+// TestRepeatedNamesArePairedSafely checks how the declarations of a repeated
+// name are paired across the trees: unchanged ones by source, wherever they
+// moved, changed ones in place when the file keeps as many, the last two left
+// over together, and any other one as new, never under the score of another
+// declaration.
+func TestRepeatedNamesArePairedSafely(t *testing.T) {
+	t.Parallel()
+	src := func(inits ...string) []byte { return []byte("package a\n" + strings.Join(inits, "")) }
+	ten, six, one := initScoring(4, ""), initScoring(3, ""), initScoring(1, "")
+	type want struct {
+		score, base int
+		state       state
+	}
+	for _, tc := range []struct {
+		name       string
+		base, head tree
+		passes     bool
+		entries    map[string]want
+	}{
+		{
+			name:   "first of two removed, the second raised above the cap",
+			base:   tree{"internal/a/a.go": src(ten, one)},
+			head:   tree{"internal/a/a.go": src(six)},
+			passes: false,
+			entries: map[string]want{
+				"internal/a.init in internal/a/a.go":              {6, 0, added},
+				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+		{
+			name:   "first of two removed, the second unchanged",
+			base:   tree{"internal/a/a.go": src(ten, six)},
+			head:   tree{"internal/a/a.go": src(six)},
+			passes: true,
+			entries: map[string]want{
+				"internal/a.init in internal/a/a.go":              {6, 6, unchanged},
+				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+		{
+			name:   "two moved to another file and swapped, unchanged",
+			base:   tree{"internal/a/a.go": src(ten, six)},
+			head:   tree{"internal/a/c.go": src(six, ten)},
+			passes: true,
+			entries: map[string]want{
+				"internal/a.init in internal/a/c.go":   {6, 6, unchanged},
+				"internal/a.init in internal/a/c.go#2": {10, 10, unchanged},
+			},
+		},
+		{
+			name:   "identical in two files, one removed",
+			base:   tree{"internal/a/a.go": src(ten), "internal/a/b.go": src(ten)},
+			head:   tree{"internal/a/b.go": src(ten)},
+			passes: true,
+			entries: map[string]want{
+				"internal/a.init in internal/a/b.go": {10, 10, unchanged},
+				"internal/a.init in internal/a/a.go": {0, 10, removed},
+			},
+		},
+		{
+			name:    "moved to another file, unchanged",
+			base:    tree{"internal/a/a.go": src(ten), "internal/a/b.go": src(one)},
+			head:    tree{"internal/a/c.go": src(ten), "internal/a/b.go": src(one)},
+			passes:  true,
+			entries: map[string]want{"internal/a.init in internal/a/c.go": {10, 10, unchanged}},
+		},
+		{
+			name:    "moved to another file and lowered",
+			base:    tree{"internal/a/a.go": src(ten), "internal/a/b.go": src(one)},
+			head:    tree{"internal/a/c.go": src(six), "internal/a/b.go": src(one)},
+			passes:  true,
+			entries: map[string]want{"internal/a.init in internal/a/c.go": {6, 10, touched}},
+		},
+		{
+			name:    "both changed in place",
+			base:    tree{"internal/a/a.go": src(ten, one)},
+			head:    tree{"internal/a/a.go": src(initScoring(4, "_ = 0\n"), initScoring(2, ""))},
+			passes:  true,
+			entries: map[string]want{"internal/a.init in internal/a/a.go": {10, 10, touched}},
+		},
+		{
+			name:   "the second raised in place",
+			base:   tree{"internal/a/a.go": src(ten, one)},
+			head:   tree{"internal/a/a.go": src(ten, six)},
+			passes: false,
+			entries: map[string]want{
+				"internal/a.init in internal/a/a.go":   {10, 10, unchanged},
+				"internal/a.init in internal/a/a.go#2": {6, 1, crossed},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			base, head := keyAcross(mustScore(t, tc.base), mustScore(t, tc.head))
+			r := evaluate(base, head, fixtureLimit)
+			got := map[string]want{}
+			for _, e := range r.entries {
+				got[e.key] = want{e.score, e.baseScore, e.state}
+			}
+			if !reflect.DeepEqual(got, tc.entries) || r.passed() != tc.passes {
+				t.Errorf("entries %+v, passed %v; want %+v, passed %v", got, r.passed(), tc.entries, tc.passes)
 			}
 		})
 	}

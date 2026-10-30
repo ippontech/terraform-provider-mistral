@@ -72,7 +72,7 @@ type function struct {
 
 // scoreTree scores every function declared in the files of t, generated
 // files aside, in file order then declaration order, each with its key
-// unqualified (see keyed). The scores are gocognit's, computed file by file
+// unqualified (see keyAcross). The scores are gocognit's, computed file by file
 // as golangci-lint's gocognit linter does, except that the //gocognit:ignore
 // directive is not honoured.
 func scoreTree(t tree) ([]function, error) {
@@ -88,42 +88,170 @@ func scoreTree(t tree) ([]function, error) {
 }
 
 // keyAcross indexes the functions of the merge base and of the working tree
-// by key, with the same rule in both trees: a key declared more than once in
-// either tree is qualified in both. Qualifying it in one tree only would
-// change the key of a function that a change leaves alone, when the change
-// adds or removes a second declaration of its name (a second init, a
-// build-tagged twin): the ratchet would then report the function as new, and
-// its old key as gone.
+// by key, so that evaluate compares each function with its own former
+// version. A name declared at most once in each tree keeps its plain key: the
+// function is matched by package and name, wherever it moved in its package.
+// The declarations of a name declared more than once in either tree (init
+// functions, build-tagged twins) are paired by matchRepeated and keyed by
+// keyRepeated.
 func keyAcross(base, head []function) (map[string]function, map[string]function) {
-	repeated := map[string]bool{}
-	for _, fns := range [][]function{base, head} {
-		seen := map[string]bool{}
-		for _, fn := range fns {
-			repeated[fn.key] = repeated[fn.key] || seen[fn.key]
-			seen[fn.key] = true
+	baseByName, headByName := byName(base), byName(head)
+	names := map[string]bool{}
+	for name := range baseByName {
+		names[name] = true
+	}
+	for name := range headByName {
+		names[name] = true
+	}
+	baseOut, headOut := map[string]function{}, map[string]function{}
+	for name := range names {
+		b, h := baseByName[name], headByName[name]
+		if len(b) > 1 || len(h) > 1 {
+			keyRepeated(b, h, baseOut, headOut)
+			continue
+		}
+		for _, fn := range b {
+			baseOut[name] = fn
+		}
+		for _, fn := range h {
+			headOut[name] = fn
 		}
 	}
-	return keyed(base, repeated), keyed(head, repeated)
+	return baseOut, headOut
 }
 
-// keyed indexes fns by key. A repeated key, that of init functions or of one
-// function per build-tagged file, is told apart by file, then by rank within
-// the file: "internal/a.init in internal/a/a.go", then "...#2".
-func keyed(fns []function, repeated map[string]bool) map[string]function {
-	out := make(map[string]function, len(fns))
-	rank := map[string]int{}
+// byName groups fns by their plain key, each group in the order of fns.
+func byName(fns []function) map[string][]function {
+	out := map[string][]function{}
 	for _, fn := range fns {
-		if repeated[fn.key] {
-			inFile := fmt.Sprintf("%s in %s", fn.key, fn.file)
-			rank[inFile]++
-			fn.key = inFile
-			if rank[inFile] > 1 {
-				fn.key = fmt.Sprintf("%s#%d", inFile, rank[inFile])
-			}
-		}
-		out[fn.key] = fn
+		out[fn.key] = append(out[fn.key], fn)
 	}
 	return out
+}
+
+// keyRepeated adds to baseOut and headOut the declarations of one repeated
+// name. A declaration of the working tree is keyed by its file, then by its
+// rank within the file: "internal/a.init in internal/a/a.go", then "...#2".
+// The declaration of the merge base paired with it takes the same key; an
+// unpaired one is keyed by its own position, marked "(merge base)" when a
+// declaration of the working tree holds that key, so that evaluate never
+// compares the two.
+func keyRepeated(b, h []function, baseOut, headOut map[string]function) {
+	headKeys := positionKeys(h)
+	for j, fn := range h {
+		fn.key = headKeys[j]
+		headOut[fn.key] = fn
+	}
+	baseKeys := positionKeys(b)
+	for i, j := range matchRepeated(b, h) {
+		fn := b[i]
+		switch {
+		case j >= 0:
+			fn.key = headKeys[j]
+		case slices.Contains(headKeys, baseKeys[i]):
+			fn.key = baseKeys[i] + " (merge base)"
+		default:
+			fn.key = baseKeys[i]
+		}
+		baseOut[fn.key] = fn
+	}
+}
+
+// positionKeys returns the key of each of fns, declarations of one name, by
+// file and rank within the file.
+func positionKeys(fns []function) []string {
+	keys := make([]string, len(fns))
+	rank := map[string]int{}
+	for i, fn := range fns {
+		inFile := fmt.Sprintf("%s in %s", fn.key, fn.file)
+		rank[inFile]++
+		keys[i] = inFile
+		if rank[inFile] > 1 {
+			keys[i] = fmt.Sprintf("%s#%d", inFile, rank[inFile])
+		}
+	}
+	return keys
+}
+
+// matchRepeated pairs the declarations of one name at the merge base (b) with
+// those of the working tree (h), and returns for each of b the index of its
+// pair in h, -1 when it has none. Four passes, each over the declarations the
+// passes before left unpaired, in file then declaration order:
+//
+//  1. same file and same source: unchanged;
+//  2. same source: unchanged, moved to another file of the package;
+//  3. same file, by order within the file, when the file holds as many
+//     unpaired declarations in both trees: changed in place;
+//  4. the last unpaired declaration of each tree, when only one is left in
+//     each: changed, and moved or not, as a name declared once may be.
+//
+// Any other declaration stays unpaired: new in the working tree, gone from the
+// merge base. A changed declaration whose former version cannot be told apart
+// is thus reported as new, never compared with the score of another
+// declaration. The one guess is pass 3: it takes a change to keep the order
+// of a name's declarations within a file, and pairs two declarations that
+// swapped places and changed with each other's former versions.
+func matchRepeated(b, h []function) []int {
+	m := matching{base: b, head: h, partner: slices.Repeat([]int{-1}, len(b)), taken: make([]bool, len(h))}
+	m.pair(func(bf, hf function) bool { return bf.file == hf.file && bytes.Equal(bf.src, hf.src) })
+	m.pair(func(bf, hf function) bool { return bytes.Equal(bf.src, hf.src) })
+	baseLeft, headLeft := m.unpairedByFile()
+	m.pair(func(bf, hf function) bool { return bf.file == hf.file && baseLeft[bf.file] == headLeft[bf.file] })
+	baseLeft, headLeft = m.unpairedByFile()
+	if sum(baseLeft) == 1 && sum(headLeft) == 1 {
+		m.pair(func(function, function) bool { return true })
+	}
+	return m.partner
+}
+
+// matching is the state of matchRepeated: base[i] is paired with
+// head[partner[i]], and taken[j] tells whether head[j] is paired.
+type matching struct {
+	base, head []function
+	partner    []int
+	taken      []bool
+}
+
+// pair pairs each unpaired declaration of the base with the first unpaired
+// declaration of the head that match accepts.
+func (m *matching) pair(match func(b, h function) bool) {
+	for i, b := range m.base {
+		if m.partner[i] >= 0 {
+			continue
+		}
+		for j, h := range m.head {
+			if !m.taken[j] && match(b, h) {
+				m.partner[i], m.taken[j] = j, true
+				break
+			}
+		}
+	}
+}
+
+// unpairedByFile counts the unpaired declarations of each file, in the base
+// and in the head.
+func (m *matching) unpairedByFile() (base, head map[string]int) {
+	base, head = map[string]int{}, map[string]int{}
+	for i, b := range m.base {
+		if m.partner[i] < 0 {
+			base[b.file]++
+		}
+	}
+	for j, h := range m.head {
+		if !m.taken[j] {
+			head[h.file]++
+		}
+	}
+	return base, head
+}
+
+// sum adds up the counts of a map.
+func sum(counts map[string]int) int {
+	n := 0
+	for _, c := range counts {
+		n += c
+	}
+	return n
 }
 
 // scoreFile scores the functions declared in one file, none when the file is

@@ -79,8 +79,10 @@ func (r result) count(s state) int {
 // rise; any other function, new or not, scores limit or less. A function is
 // matched across the trees by its key, its package directory and name, so
 // moving it to another file of the package keeps it, while renaming it or
-// moving it to another package makes it new. A name declared more than once
-// in either tree is matched by file too (keyAcross).
+// moving it to another package makes it new. The declarations of a name
+// declared more than once in either tree are paired by source, file and
+// order within the file; one that cannot be paired counts as new
+// (matchRepeated).
 func evaluate(base, head map[string]function, limit int) result {
 	r := result{limit: limit, checked: len(head)}
 	for _, h := range head {
