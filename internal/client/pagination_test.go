@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ippontech/terraform-provider-mistral/internal/sdktest"
 )
@@ -232,4 +233,39 @@ func TestMultipartOpenErrorFailsTheUpload(t *testing.T) {
 	if closed.Load() != 1 {
 		t.Errorf("the file opened before the failure was closed %d times, want 1", closed.Load())
 	}
+}
+
+// signalCloser is a file whose Close closes closed.
+type signalCloser struct {
+	io.Reader
+	closed chan struct{}
+}
+
+// Close records that the file was closed; it must be called once.
+func (s signalCloser) Close() error {
+	close(s.closed)
+	return nil
+}
+
+// An upload whose request cannot be built stops streaming its form and
+// closes its file: nothing reads the multipart pipe, and without the close
+// its writer would block forever with the file open.
+func TestMultipartFileIsClosedWhenTheRequestCannotBeBuilt(t *testing.T) {
+	t.Parallel()
+	srv := sdktest.NewServer(t)
+	file := signalCloser{Reader: strings.NewReader("hello"), closed: make(chan struct{})}
+
+	_, _, err := newTestClient(srv).UploadDocument(context.Background(), "/%zz", DocumentFile{
+		Filename: "a.txt",
+		Open:     func() (io.ReadCloser, error) { return file, nil },
+	})
+	if _, ok := errors.AsType[*buildError](err); !ok {
+		t.Errorf("err = %v, want a build error", err)
+	}
+	select {
+	case <-file.closed:
+	case <-time.After(5 * time.Second):
+		t.Error("the file is still open")
+	}
+	srv.AssertCalled("", 0)
 }

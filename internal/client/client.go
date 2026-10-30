@@ -149,8 +149,13 @@ func (cl *Client) send(ctx context.Context, c call, payload []byte) (*http.Respo
 	case payload != nil:
 		body, contentType = bytes.NewReader(payload), "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, c.method, u, body)
+	req, err := newRequest(ctx, c.method, c.path, u, body)
 	if err != nil {
+		// Nothing else closes a body no request was built with: close the
+		// multipart pipe, so that its writer stops and closes the files.
+		if closer, ok := body.(io.Closer); ok {
+			_ = closer.Close()
+		}
 		return nil, false, &buildError{err}
 	}
 	if contentType != "" {
@@ -164,6 +169,16 @@ func (cl *Client) send(ctx context.Context, c call, payload []byte) (*http.Respo
 
 	resp, err := cl.http.Do(req)
 	return resp, sent, err
+}
+
+// newRequest builds the request of a call, unless escapePath refused its
+// path: that path would reach another object once a server or proxy resolves
+// its dot segments.
+func newRequest(ctx context.Context, method, path, u string, body io.Reader) (*http.Request, error) {
+	if strings.Contains(path, invalidSegment) {
+		return nil, errors.New(`a path segment is empty, ".", ".." or starts with "/"`)
+	}
+	return http.NewRequestWithContext(ctx, method, u, body)
 }
 
 // buildError is a failure to build a request, before any network activity:
@@ -226,14 +241,30 @@ func wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// escapePath joins segments into a path, escaping each one: "/v1/agents" and
-// an agent ID give "/v1/agents/<id>" whatever the ID holds.
-func escapePath(segments ...string) string {
+// invalidSegment marks a path escapePath refused. It reads like the marks
+// fmt leaves on a bad verb, and send checks for it.
+const invalidSegment = "%!(invalid path segment"
+
+// escapePath joins a base path and segments into a path. The base, a
+// constant such as "/v1/agents" or a path escapePath built, is written as it
+// is; each segment is escaped, so that "/v1/agents" and an agent ID give
+// "/v1/agents/<id>" whatever the ID holds.
+//
+// Escaping cannot keep every segment in its place, so some are refused: an
+// empty one, which turns "/v1/agents/<id>" into "/v1/agents/", the list;
+// "." and "..", which servers and proxies resolve as dot segments (RFC 3986,
+// section 5.2.4), so that "/v1/agents/.." reaches "/v1"; and one with a
+// leading "/", which only a base path passed in the wrong place has.
+// escapePath then returns a path that ends with invalidSegment and names the
+// segment, so that error messages show it, and send refuses that path with a
+// buildError, never retried, before anything is sent. Returning an error
+// instead would add one to each of the typed calls.
+func escapePath(base string, segments ...string) string {
 	var b strings.Builder
+	b.WriteString(base)
 	for _, s := range segments {
-		if strings.HasPrefix(s, "/") {
-			b.WriteString(s)
-			continue
+		if s == "" || s == "." || s == ".." || strings.HasPrefix(s, "/") {
+			return fmt.Sprintf("%s/%s %q)", base, invalidSegment, s)
 		}
 		b.WriteByte('/')
 		b.WriteString(url.PathEscape(s))
