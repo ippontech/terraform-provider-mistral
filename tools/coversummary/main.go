@@ -12,7 +12,9 @@
 //
 //   - diff: at least diff_min % of the executable statements a change touches
 //     (non-test Go files, outside the exclusions) are covered; it needs the
-//     output of `git diff --unified=0 <base>...HEAD` (-diff);
+//     unified diff of the change without context lines (-diff), which `make
+//     cover` and the CI coverage job write with flags that fix its format
+//     whatever the git configuration;
 //   - total: the total outside the exclusions is at total_target % or more;
 //   - packages: every package outside the exclusions is at package_min % or
 //     more. While package_min is null, the rule is not enforced: the summary
@@ -28,8 +30,12 @@
 // It prints the summary on stdout and exits 1 when a rule fails, 2 on a usage
 // or input error.
 //
-//	go test -coverprofile=coverage.out ./...
-//	git diff --unified=0 origin/main...HEAD | go run -C tools ./coversummary -config ../.coverage.json -diff - ../coverage.out
+//	make cover COVER_BASE=origin/main
+//
+// runs the tests, then the git diff of GNUmakefile's cover target and this
+// command:
+//
+//	go run -C tools ./coversummary -config ../.coverage.json -diff ../coverage-diff.out ../coverage.out
 //
 // It uses the standard library only, so it adds nothing to the tools module.
 package main
@@ -61,7 +67,7 @@ func main() {
 	match := flag.String("match", `_(resource|data_source)\.go$`, "regular expression selecting the files listed one by one")
 	trim := flag.String("trim", "github.com/ippontech/terraform-provider-mistral/", "module path prefix removed from the file paths of the profile")
 	configPath := flag.String("config", "", "coverage gate configuration (.coverage.json); without it, only the summary is printed")
-	diffPath := flag.String("diff", "", "output of git diff --unified=0 <base>...HEAD for the diff rule, - for stdin")
+	diffPath := flag.String("diff", "", "git diff of <base>...HEAD for the diff rule, as the cover target of GNUmakefile writes it; - for stdin")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintln(flag.CommandLine.Output(), "usage: coversummary [-match regexp] [-trim prefix] [-config .coverage.json [-diff file]] coverage.out")
 		flag.PrintDefaults()

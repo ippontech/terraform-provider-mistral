@@ -43,13 +43,17 @@ test:
 # tools/coversummary): the diff rule against COVER_BASE (committed changes
 # only), the total and the per-package minimum, followed by the coverage of
 # each resource and data source file. Fails like the CI job does. The git
-# diff flags fix the format coversummary parses, whatever the user's git
-# configuration (diff.noprefix, an external diff or textconv driver,
-# diff.interHunkContext); the coverage job of provider.yml passes the same.
+# diff flags fix the format coversummary parses and the hunks it counts to
+# git's defaults, as on the CI runner, whatever the user's configuration:
+# diff.noprefix, diff.external and GIT_EXTERNAL_DIFF, textconv drivers,
+# diff.interHunkContext, diff.algorithm, diff.indentHeuristic, diff.renames,
+# diff.renameLimit (1000 is git's default), and GIT_DIFF_OPTS, which git
+# lets override --unified. The coverage job of provider.yml passes the same.
 COVER_BASE ?= origin/main
 cover: COVERPROFILE := coverage.out
 cover: test
-	git diff --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --unified=0 --inter-hunk-context=0 --no-color \
+	GIT_DIFF_OPTS= git diff --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --no-color \
+		--unified=0 --inter-hunk-context=0 --diff-algorithm=myers --indent-heuristic --find-renames -l1000 \
 		$(COVER_BASE)...HEAD > coverage-diff.out
 	go run -C tools ./coversummary -config ../.coverage.json -diff ../coverage-diff.out ../$(COVERPROFILE)
 

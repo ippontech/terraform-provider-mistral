@@ -249,13 +249,15 @@ jobs:
 
       # BASE_SHA is the base branch's commit of the pull request, or of the
       # merge queue entry. The diff rule reads the lines the change adds or
-      # modifies since its merge base with HEAD. The git diff flags are those
-      # of `make cover`, which fix the format coversummary parses.
+      # modifies since its merge base with HEAD. The git diff flags, and
+      # GIT_DIFF_OPTS cleared, are those of `make cover` (GNUmakefile says
+      # which settings they override): they fix the hunks coversummary reads.
       - name: Coverage gate
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          git diff --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --unified=0 --inter-hunk-context=0 --no-color \
+          env -u GIT_DIFF_OPTS git diff --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --no-color \
+            --unified=0 --inter-hunk-context=0 --diff-algorithm=myers --indent-heuristic --find-renames -l1000 \
             "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/changes.diff"
           go run -C tools ./coversummary -config ../.coverage.json \
             -diff "${RUNNER_TEMP}/changes.diff" ../coverage.out >> "${GITHUB_STEP_SUMMARY}"
