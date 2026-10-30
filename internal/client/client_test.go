@@ -194,6 +194,8 @@ func TestErrorHelpers(t *testing.T) {
 	}
 }
 
+// escapePath escapes every segment after the base, a base it built
+// included, and keeps segments that hold dots without being dot segments.
 func TestEscapePath(t *testing.T) {
 	t.Parallel()
 	if got := escapePath("/v1/agents", "a/b c", "versions"); got != "/v1/agents/a%2Fb%20c/versions" {

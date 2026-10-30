@@ -241,6 +241,7 @@ type signalCloser struct {
 	closed chan struct{}
 }
 
+// Close records that the file was closed; it must be called once.
 func (s signalCloser) Close() error {
 	close(s.closed)
 	return nil
