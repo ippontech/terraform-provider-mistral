@@ -28,6 +28,7 @@
 
 - That an explicit null clears `description` on the `PATCH` of a library, and `attributes` and `expires_at` on the `PATCH` of a document (our reading of `anyOf [..., null]`); `TestAccLibraryResource` checks the three.
 - That an upload of the same content answers 200, as the specification says, and whether the hash covers only the content or the name too.
+- What a re-upload of identical bytes answers right after the `DELETE` of the document that held them (a replacement without `create_before_destroy`): 201 if the deletion takes effect at once, 200 with the deleted document if it runs later, which would fail the replacement with the import error. And right before it (with `create_before_destroy`): 200 with the old document, which fails the create as `TestLibraryDocumentResourceCannotReplaceSameContentBeforeDestroy` pins.
 - The values `process_status` takes in practice: whether a text file goes to `done` or `noop`, and what an empty or image-only file gives.
 - That `size` is in bytes, and that `total_size` is their sum.
 - Whether the answer of `PATCH` returns the attributes as sent, with no attribute of its own, and `expires_at` at the same instant: either difference fails an apply with "inconsistent result".

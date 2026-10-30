@@ -19,7 +19,7 @@ This resource is meant for a curated corpus: a few dozen documents kept in git n
 
 ## Content and metadata
 
-The API cannot change the content of a document. A new `source`, or a new `source_hash`, replaces the document: the provider deletes it and uploads the file again, which the library processes, and bills, again. Terraform does not read the file to plan: set `source_hash = filesha256(...)`, or a change of the content goes unnoticed. Adding `source_hash` to a document uploaded without one replaces it too, even when the file has not changed, since nothing tells whether it changed after the upload; removing `source_hash` changes nothing at Mistral. `size` is the size the API reports; it is not compared with the local file, since a hash catches every change and a size does not.
+The API cannot change the content of a document. A new `source`, or a new `source_hash`, replaces the document: the provider deletes it and uploads the file again, which the library processes, and bills, again. Terraform does not read the file to plan: set `source_hash = filesha256(...)`, or a change of the content goes unnoticed. Adding `source_hash` to a document uploaded without one replaces it too, even when the file has not changed, since nothing tells whether it changed after the upload (with `create_before_destroy`, see *Same content*); removing `source_hash` changes nothing at Mistral. `size` is the size the API reports; it is not compared with the local file, since a hash catches every change and a size does not.
 
 `name`, `attributes` and `expires_at` change in place. `name` defaults to the file name of `source`. `attributes` holds strings: a value set outside Terraform as another JSON type, such as a number, reads as its JSON text, and an update sends it back as a string.
 
@@ -30,6 +30,8 @@ The upload queues the document for processing: text extraction, and OCR for a sc
 ## Same content
 
 A library holds one document per content: the upload of a file the library already holds returns the existing document. The create then fails, and gives the `import` block of that document, rather than managing a document uploaded outside Terraform or by another resource.
+
+The same rule stops a replacement with `create_before_destroy` when the content does not change, as when `source_hash` is added to a document uploaded without one, or `source` moves to a copy of the same file: the new upload meets the old document, which still exists, and the apply fails with that error while the old document stays. Apply the replacement without `create_before_destroy`, which deletes the old document before the upload; the document is missing from the library between the two.
 
 ## Expiry
 

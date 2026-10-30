@@ -290,6 +290,53 @@ func TestLibraryDocumentResourceReplacesTheDocumentWhenAHashIsAdded(t *testing.T
 	f.AssertCalled(routeUpdateDocument, 0)
 }
 
+// A library holds one document per content, so create_before_destroy cannot
+// replace a document with the same file: the upload of the new copy answers
+// 200 with the old one, the create fails with the import error, and the old
+// document stays. The replacement goes through without create_before_destroy.
+func TestLibraryDocumentResourceCannotReplaceSameContentBeforeDestroy(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	guide := writeFile(t, "guide.md", "# Guide\n")
+	tracked := `  source      = "` + guide + `"
+  source_hash = filesha256("` + guide + `")`
+	var libraryID, first, second string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config: documentConfig(`  source = "` + guide + `"`),
+				Check:  documentIDs(&libraryID, &first),
+			},
+			{
+				Config: documentConfig(tracked + "\n  lifecycle {\n    create_before_destroy = true\n  }"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(documentAddr, plancheck.ResourceActionCreateBeforeDestroy)},
+				},
+				ExpectError: regexp.MustCompile(`Library\s+document\s+already\s+exists(.|\n)*import\s+block(.|\n)*without\s+create_before_destroy`),
+			},
+			{
+				PreConfig: func() {
+					if _, ok := f.documents.Get(first); !ok || f.documents.Len() != 1 {
+						t.Errorf("after the failed replacement, the library holds %d documents, want the old one only", f.documents.Len())
+					}
+				},
+				Config:           documentConfig(tracked),
+				ConfigPlanChecks: providertest.ExpectAction(documentAddr, plancheck.ResourceActionDestroyBeforeCreate),
+				Check:            documentIDs(&libraryID, &second),
+			},
+		},
+	})
+	if first == second {
+		t.Errorf("the replacement kept the document %s", first)
+	}
+	f.AssertCalled(routeUpload, 3)
+	// The replacement without create_before_destroy, then the destroy at the
+	// end of the test.
+	f.AssertCalled(routeDeleteDocument, 2)
+}
+
 // A failed processing leaves the document in the state, tainted: the next
 // apply replaces it.
 func TestLibraryDocumentResourceTaintsADocumentThatFailedProcessing(t *testing.T) {

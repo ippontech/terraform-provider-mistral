@@ -376,7 +376,9 @@ func (r *LibraryDocumentResource) upload(ctx context.Context, plan documentModel
 		// outside Terraform, or one that another resource already manages.
 		diags.AddAttributeError(path.Root("source"), "Library document already exists",
 			fmt.Sprintf("The library %q already holds a document with the content of %q: %q (document %s). "+
-				"Import it with an import block (id = %q) to manage it, or remove the other document.",
+				"Import it with an import block (id = %q) to manage it, or remove the other document. "+
+				"When this resource replaces its own document with create_before_destroy, that document is the old copy: "+
+				"apply the replacement without create_before_destroy.",
 				libraryID, source, doc.Name, doc.ID, libraryID+":"+doc.ID))
 		return nil
 	}
