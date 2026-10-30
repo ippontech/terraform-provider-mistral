@@ -22,6 +22,9 @@ func git(dir string, args ...string) ([]byte, error) {
 	return gitInput(dir, nil, args...)
 }
 
+// gitInput runs git in dir ("" for the current directory) with stdin as its
+// standard input, and returns its standard output; the error carries git's
+// standard error.
 func gitInput(dir string, stdin io.Reader, args ...string) ([]byte, error) {
 	//nolint:gosec // G204: always git; findMergeBase refuses a -base that git would read as an option.
 	cmd := exec.Command("git", args...)
