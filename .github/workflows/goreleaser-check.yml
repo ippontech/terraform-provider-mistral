@@ -1,5 +1,9 @@
 name: GoReleaser Check
 
+# Checks the GoReleaser configuration and builds a snapshot of the release on
+# every pull request: the 13 targets cross-compiled, archived and summed as
+# goreleaser-release.yml does, without signing or publishing, so that a target
+# that stops building fails here and not when a version tag is pushed.
 on:
   pull_request:
   merge_group:
@@ -9,10 +13,16 @@ permissions: {}
 jobs:
   goreleaser-snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The snapshot build takes about 3 minutes, without a module cache.
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
+      # proxy.golang.org, storage.googleapis.com, sum.golang.org: the modules
+      # the build downloads, and their checksums. raw.githubusercontent.com:
+      # setup-go's manifest when the API call fails. go.dev, dl.google.com:
+      # its fallback when the toolchain is not in that manifest yet (go.dev/dl,
+      # whose downloads redirect to dl.google.com).
       - name: Harden runner
         # Free for public repositories only: skipped while the repository is private.
         if: ${{ !github.event.repository.private }}
@@ -21,15 +31,22 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             api.github.com:443
+            dl.google.com:443
             github.com:443
+            go.dev:443
+            proxy.golang.org:443
+            raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # No cache, as in the release job: `goreleaser check` builds nothing, so
-      # a cache saves no time here, and zizmor flags one next to GoReleaser.
+      # No cache, as in the release job: zizmor flags a cache in a job that
+      # runs GoReleaser (cache-poisoning), and the build downloads its modules
+      # as the release job does.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
@@ -44,3 +61,9 @@ jobs:
 
       - name: Check GoReleaser config
         run: goreleaser check
+
+      # The command of RELEASE.md, Checking a release. --snapshot implies no
+      # publishing; signing needs the GPG key of the release environment, which
+      # a pull request never gets.
+      - name: Build a snapshot release
+        run: goreleaser release --snapshot --clean --skip=sign,publish

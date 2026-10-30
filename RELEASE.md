@@ -66,5 +66,5 @@ These steps need an owner of the GitHub organization and of the registry namespa
 ## Checking a release
 
 - **Local snapshot:** `goreleaser release --snapshot --clean --skip=sign,publish` builds the 13 archives, the `SHA256SUMS` file and the registry manifest locally.
-- **Pull requests:** `goreleaser check` and a snapshot build run on every pull request (`goreleaser-check.yml`).
+- **Pull requests:** `goreleaser check`, then the same snapshot build, without signing or publishing, run on every pull request and in the merge queue (`goreleaser-check.yml`, required check `goreleaser-snapshot`).
 - **Release notes:** a snapshot does not write them. To preview them, tag the commit in a throwaway clone and run `goreleaser release --clean --skip=publish,sign,validate` there: the notes are in `dist/CHANGELOG.md`.
