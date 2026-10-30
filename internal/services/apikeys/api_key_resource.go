@@ -114,8 +114,9 @@ func (r *APIKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional: true,
 				MarkdownDescription: "The date the key should expire, in RFC 3339 date format (`2027-06-30`). When null, the key never expires, " +
 					"unless an expiration policy applies. The state keeps the configured date: `expiration_date` gives the date Mistral set. " +
-					"Changing it replaces the key, except after an import, where the first apply records it in place.",
-				PlanModifiers: []planmodifier.String{replaceUnlessImported()},
+					"Changing it replaces the key, except after an import, where the first apply records it in place, " +
+					"and except when it is added to a key whose `expiration_date` is already on or before it, which records it in place too.",
+				PlanModifiers: []planmodifier.String{replaceExpiration()},
 				Validators:    []validator.String{date{}},
 			},
 			"expiration_date": schema.StringAttribute{
@@ -144,28 +145,74 @@ func (r *APIKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 	}
 }
 
-// replaceUnlessImported replaces the key when user_id or expiration changes,
-// except on the first apply after an import. Neither is read back, user_id
-// because the list does not return it and expiration because the API may
-// shorten it, so both are null after an import: that apply records the
-// configured values in place (Update) instead of replacing a key that
-// applications use.
+// replaceUnlessImported replaces the key when user_id changes, except on the
+// first apply after an import (replaceExpiration does the same for
+// expiration). Neither is read back, user_id because the list does not
+// return it and expiration because the API may shorten it, so both are null
+// after an import: that apply records the configured values in place
+// (Update) instead of replacing a key that applications use.
 //
 // A null value alone does not mark an import: a key created without an
 // expiration has none either, and recording one in place would leave the key
 // without an expiry at Mistral. The import marker is a null user_id in the
-// state: the argument is required, so every create stores it, and only an
-// import leaves it null until the first apply records it.
+// state (imported).
 func replaceUnlessImported() planmodifier.String {
 	return stringplanmodifier.RequiresReplaceIf(
 		func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
-			var userID types.String
-			resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("user_id"), &userID)...)
-			resp.RequiresReplace = !userID.IsNull()
+			resp.RequiresReplace = !imported(ctx, req.State, &resp.Diagnostics)
 		},
 		"Changing the value replaces the key, except on the first apply after an import, which records it in place.",
 		"Changing the value replaces the key, except on the first apply after an import, which records it in place.",
 	)
+}
+
+// replaceExpiration is replaceUnlessImported for expiration, which also
+// records in place an expiration added to a key that already expires on or
+// before that date, as a policy may have set it: the key meets the new date,
+// and a new key would expire no earlier, so a replacement would only cut off
+// the applications that use it. An expiration added to a key that never
+// expires, or that expires later, still replaces the key, and so does any
+// change of a configured expiration: moving it later is how a key is renewed.
+func replaceExpiration() planmodifier.String {
+	return stringplanmodifier.RequiresReplaceIf(
+		func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+			if imported(ctx, req.State, &resp.Diagnostics) {
+				return
+			}
+			// A change from null adds a date. One unknown at plan time reads
+			// as "", which expiresBy cannot compare: the key is replaced.
+			added := req.StateValue.IsNull()
+			resp.RequiresReplace = !added || !expiresBy(ctx, req.State, req.PlanValue.ValueString(), &resp.Diagnostics)
+		},
+		"Changing the value replaces the key, except on the first apply after an import, and except for a date added to a key "+
+			"that already expires on or before it; both record the date in place.",
+		"Changing the value replaces the key, except on the first apply after an import, and except for a date added to a key "+
+			"that already expires on or before it; both record the date in place.",
+	)
+}
+
+// imported reports whether state is that of a key imported and not applied
+// since: user_id is required, so every create stores it, and only an import
+// leaves it null until the first apply records it.
+func imported(ctx context.Context, state tfsdk.State, diags *diag.Diagnostics) bool {
+	var userID types.String
+	diags.Append(state.GetAttribute(ctx, path.Root("user_id"), &userID)...)
+	return userID.IsNull()
+}
+
+// expiresBy reports whether the key of state expires on or before planned,
+// a YYYY-MM-DD date. The client reads expiration_date as such a date, the
+// format of the specification; a null date (a key that never expires) or
+// another format reports false, which replaces the key: the safe side.
+func expiresBy(ctx context.Context, state tfsdk.State, planned string, diags *diag.Diagnostics) bool {
+	var current types.String
+	diags.Append(state.GetAttribute(ctx, path.Root("expiration_date"), &current)...)
+	expiry, err := time.Parse(time.DateOnly, current.ValueString())
+	if err != nil {
+		return false
+	}
+	asked, err := time.Parse(time.DateOnly, planned)
+	return err == nil && !expiry.After(asked)
 }
 
 // Configure takes the client of the provider, and fails without the Admin API
@@ -222,8 +269,9 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 }
 
 // Update only records user_id and expiration on the first apply after an
-// import: every other change replaces the key (replaceUnlessImported), and
-// the API has no update to call.
+// import, and an expiration added to a key that already expires by then:
+// every other change replaces the key (replaceUnlessImported,
+// replaceExpiration), and the API has no update to call.
 func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state apiKeyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
