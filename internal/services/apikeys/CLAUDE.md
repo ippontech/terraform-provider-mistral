@@ -14,7 +14,7 @@
 
 - **`findAPIKey`** walks the list with `name=<name>` when the key has a name, then the whole list (a key imported, or renamed outside Terraform, escapes the filter), and compares `key_id`. The list ends on a page shorter than the limit (`walkOffset`). Replace this function when Mistral adds a read by ID.
 - **Expiration in two attributes.** `expiration` keeps the configured date and is never read back; `expiration_date` is computed from the answer. A date shortened by a policy then never plans a replacement.
-- **`replaceUnlessImported`** on `user_id` and `expiration`: neither is read back, so both are null after an import. A change from null records the configured value in place (`Update`, which calls nothing); any other change replaces the key. `workspace_id` and `name` read back and replace on change.
+- **`replaceUnlessImported`** on `user_id`: the list does not return it, so it is null after an import, and only then since it is required; the first apply records it in place (`Update`, which calls nothing). **`replaceExpiration`** on `expiration`, never read back: any change replaces the key, except a date added where the state has none (a key created without one, or right after an import) when the key is still valid and already expires on that very date (`expiresOn`: an `expiration_date` after today in UTC and equal to the date), as when a policy set it, which is recorded in place. Any other date replaces the key, earlier or later: a new key gets min(date, today + the policy's maximum), which can differ from the old key's date once the policy window has moved, so only the replacement tells, the plan shows it, and the state never claims a date the key does not have. A null, other, past or same-day `expiration_date`, one neither `YYYY-MM-DD` nor an RFC 3339 date and time (read as its UTC date, `dateOf`), or a date unknown at plan time replaces the key, imported or not: an imported key that never expires is not kept with a date Mistral does not enforce. A change of a recorded expiration always replaces: moving it later renews the key. The rule does not look at `user_id`, which `ignore_changes` can keep null for good after an import. Today is read from the clock at plan time and again at apply time, so an apply that crosses midnight UTC after its plan, for a key whose `expiration_date` is that day, fails with "Provider produced inconsistent final plan" without calling the API; the page says to plan again. Deciding from the date of the last refresh, kept in the private state, was rejected: a saved plan applied later would then keep an expired key. `workspace_id` and `name` read back and replace on change.
 - **The secret** is a computed, sensitive `key`, set from the create only and kept by `Read`; an import leaves it null. `hidden_key` is the masked value.
 - **No `create_before_destroy` by default**: whether two keys of the same name may coexist is not documented; the page tells users they can set it.
 - Not mapped: `actions`, `can_delete`, `product`, `last_used` (it changes with every call), `created_by`.
@@ -25,10 +25,11 @@
 - Whether the `name` filter is a substring match, as documented.
 - Whether an unnamed key reads back as null or `""` (both map to null).
 - The status and body of a delete of a missing key (the provider takes a 404 as done).
-- The format of `created_at` and `expiration_date`.
+- The format of `created_at` and `expiration_date`. The specification types `expiration_date` as `format: date` (`YYYY-MM-DD`); `dateOf` also reads an RFC 3339 date and time, as its UTC date, in case the API answers one.
 
 ## Tests
 
+- `main_test.go` sets the provider's clock (`now`, through `export_test.go`) to the fake's `today`, so that the dates of the tests stay ahead of or behind it whatever the day of the run.
 - `fake_test.go` serves the three routes; `setPolicy(days)` sets an expiration policy, whose start is the fake's `today`. Secrets are `fake-secret-<n>`, in creation order.
 - `api_key_resource_fake_test.go` holds the fake tests; `api_key_resource_test.go` the acceptance test, which needs `MISTRAL_ACC_WORKSPACE_ID` and `MISTRAL_ACC_MEMBER_USER_ID`.
 - An import by identity plans an update (`user_id`), so that step sets `ExpectNonEmptyPlan` and checks the update.

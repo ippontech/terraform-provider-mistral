@@ -169,11 +169,13 @@ resource "mistral_api_key" "unlimited" {
 
 // An import block brings a key created in the Admin Panel under Terraform.
 // user_id and expiration are not read back: the first apply records them in
-// place and does not replace the key.
+// place and does not replace the key, which already expires on the
+// configured date.
 func TestAPIKeyResourceImportsAKeyCreatedOutsideTerraform(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
-	id := f.seed("ci", workspaceID)
+	id := f.seed("ci")
+	f.keys.Patch(id, map[string]any{"expiration_date": "2027-06-30"})
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
@@ -186,7 +188,7 @@ func TestAPIKeyResourceImportsAKeyCreatedOutsideTerraform(t *testing.T) {
 					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("key"), knownvalue.Null()),
 					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("user_id"), knownvalue.StringExact(userID)),
 					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration"), knownvalue.StringExact("2027-06-30")),
-					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.Null()),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2027-06-30")),
 					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("hidden_key"), knownvalue.StringExact("************ci")),
 				},
 			},
@@ -206,6 +208,224 @@ resource "mistral_api_key" "ci" {
 	})
 	f.AssertCalled(routeCreate, 1)
 	f.AssertCalled(routeDelete, 2)
+}
+
+// Adding an expiration to a key created without one replaces the key: the
+// API cannot set an expiry on an existing key, so recording the date in place
+// would leave a key that never expires.
+func TestAPIKeyResourceReplacesAKeyWhenAnExpirationIsAdded(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config:           keyConfig(""),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.Null()),
+				},
+			},
+			{
+				Config:           keyConfig(`  expiration = "2027-06-30"`),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionDestroyBeforeCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("key"), knownvalue.StringExact("fake-secret-0002")),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration"), knownvalue.StringExact("2027-06-30")),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2027-06-30")),
+				},
+			},
+		},
+	})
+	f.AssertJSONBodies(routeCreate, createBody("null", "null"), createBody("null", `"2027-06-30"`))
+	// The replacement, then the destroy at the end of the test.
+	f.AssertCalled(routeDelete, 2)
+}
+
+// An expiration added to a key still valid that already expires on that
+// very date, as a policy sets it, is recorded in place: the state then holds
+// the date the key has. Any other date, earlier or later, replaces the key,
+// and so do a key that has expired or expires today, an expiration_date in
+// neither format the provider reads, and a date unknown at plan time.
+func TestAPIKeyResourceRecordsOnlyTheDateTheKeyHas(t *testing.T) {
+	t.Parallel()
+	const policyDate = "2026-11-28" // today in the fake, plus the 30 days of the policy
+	cases := map[string]struct {
+		policy           bool
+		expirationDate   string // set on the key outside Terraform when not empty
+		expiration       string // the expression added to the configuration
+		action           plancheck.ResourceActionType
+		wantExpiration   string
+		wantExpiryDate   string
+		wantCreatedCalls int
+	}{
+		"the date the key has": {true, "", `"2026-11-28"`, plancheck.ResourceActionUpdate, "2026-11-28", policyDate, 1},
+		// A new key under the policy may get another date than the old one,
+		// once the policy window has moved: the plan shows the replacement.
+		"a later date":    {true, "", `"2027-06-30"`, plancheck.ResourceActionDestroyBeforeCreate, "2027-06-30", policyDate, 2},
+		"an earlier date": {true, "", `"2026-11-01"`, plancheck.ResourceActionDestroyBeforeCreate, "2026-11-01", "2026-11-01", 2},
+		"an unknown date": {true, "", `terraform_data.expiry.output`, plancheck.ResourceActionDestroyBeforeCreate, "2026-11-28", policyDate, 2},
+		// The specification types expiration_date as a date; a date and time
+		// counts by its UTC date.
+		"a date and time":             {false, "2026-11-28T00:00:00Z", `"2026-11-28"`, plancheck.ResourceActionUpdate, "2026-11-28", "2026-11-28T00:00:00Z", 1},
+		"a date and time west of UTC": {false, "2026-11-28T23:30:00-02:00", `"2026-11-29"`, plancheck.ResourceActionUpdate, "2026-11-29", "2026-11-28T23:30:00-02:00", 1},
+		"another format":              {false, "28/11/2026", `"2026-11-28"`, plancheck.ResourceActionDestroyBeforeCreate, "2026-11-28", "2026-11-28", 2},
+		// The clock of the provider is the fake's today, 2026-10-29 (TestMain).
+		"an expired key":              {false, "2026-10-01", `"2026-10-01"`, plancheck.ResourceActionDestroyBeforeCreate, "2026-10-01", "2026-10-01", 2},
+		"a key that expires today":    {false, "2026-10-29", `"2026-10-29"`, plancheck.ResourceActionDestroyBeforeCreate, "2026-10-29", "2026-10-29", 2},
+		"a key that expires tomorrow": {false, "2026-10-30", `"2026-10-30"`, plancheck.ResourceActionUpdate, "2026-10-30", "2026-10-30", 1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFake(t)
+			if c.policy {
+				f.setPolicy(30)
+			}
+			var id string
+			expiry := "resource \"terraform_data\" \"expiry\" {\n  input = \"2026-11-28\"\n}\n"
+
+			resource.UnitTest(t, resource.TestCase{
+				ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+				Steps: []resource.TestStep{
+					{Config: keyConfig(""), Check: readKeyID(&id)},
+					{
+						PreConfig: func() {
+							if c.expirationDate != "" {
+								f.keys.Patch(id, map[string]any{"expiration_date": c.expirationDate})
+							}
+						},
+						Config:           keyConfig("  expiration = "+c.expiration) + expiry,
+						ConfigPlanChecks: providertest.ExpectAction(keyAddr, c.action),
+						ConfigStateChecks: []statecheck.StateCheck{
+							statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration"), knownvalue.StringExact(c.wantExpiration)),
+							statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact(c.wantExpiryDate)),
+						},
+					},
+				},
+			})
+			f.AssertCalled(routeCreate, c.wantCreatedCalls)
+		})
+	}
+}
+
+// The first apply after an import records an expiration in place only when
+// the key meets it, as for a key Terraform created: an imported key that
+// never expires is replaced, rather than kept with a date in the state that
+// Mistral does not enforce.
+func TestAPIKeyResourceReplacesAnImportedKeyThatOutlivesTheExpiration(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seed("ci")
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{{
+			Config:           keyConfig("  name       = \"ci\"\n  expiration = \"2027-06-30\"") + "import {\n  to = mistral_api_key.ci\n  id = \"" + id + "\"\n}\n",
+			ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionDestroyBeforeCreate),
+			ConfigStateChecks: []statecheck.StateCheck{
+				statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("key"), knownvalue.StringExact("fake-secret-0001")),
+				statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2027-06-30")),
+			},
+		}},
+	})
+	f.AssertJSONBodies(routeCreate, createBody(`"ci"`, `"2027-06-30"`))
+	if got := f.Requests(routeDelete)[0].Path; got != "/v1/admin/api-keys/"+id {
+		t.Errorf("the replacement deleted %s, want the imported key %s", got, id)
+	}
+}
+
+// With ignore_changes on user_id, an imported key keeps a null user_id in
+// the state for good. Once its expiration is recorded, moving it later still
+// renews the key.
+func TestAPIKeyResourceRenewsAnImportedKeyWhoseUserIsIgnored(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seed("ci")
+	f.keys.Patch(id, map[string]any{"expiration_date": "2027-06-30"})
+	config := func(expiration string) string {
+		return keyConfig(fmt.Sprintf("  name       = \"ci\"\n  expiration = %q\n  lifecycle {\n    ignore_changes = [user_id]\n  }", expiration))
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config:           config("2027-06-30") + "import {\n  to = mistral_api_key.ci\n  id = \"" + id + "\"\n}\n",
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionUpdate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("user_id"), knownvalue.Null()),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration"), knownvalue.StringExact("2027-06-30")),
+				},
+			},
+			{
+				Config:           config("2028-06-30"),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionDestroyBeforeCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2028-06-30")),
+				},
+			},
+		},
+	})
+	f.AssertJSONBodies(routeCreate, createBody(`"ci"`, `"2028-06-30"`))
+}
+
+// Moving a configured expiration later renews the key: a replacement, even
+// though the key already expires before the new date.
+func TestAPIKeyResourceRenewsAKeyWhenItsExpirationMovesLater(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: keyConfig(`  expiration = "2027-06-30"`)},
+			{
+				Config:           keyConfig(`  expiration = "2028-06-30"`),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionDestroyBeforeCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2028-06-30")),
+				},
+			},
+		},
+	})
+	f.AssertJSONBodies(routeCreate, createBody("null", `"2027-06-30"`), createBody("null", `"2028-06-30"`))
+}
+
+// Only the first apply after an import records an expiration in place: once
+// it has recorded user_id, adding an expiration replaces the key, as for a
+// key Terraform created.
+func TestAPIKeyResourceReplacesOnAnExpirationAddedAfterTheImport(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seed("ci")
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config:           keyConfig(`  name = "ci"`) + "import {\n  to = mistral_api_key.ci\n  id = \"" + id + "\"\n}\n",
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionUpdate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("user_id"), knownvalue.StringExact(userID)),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration"), knownvalue.Null()),
+				},
+			},
+			{
+				Config:           keyConfig("  name       = \"ci\"\n  expiration = \"2027-06-30\""),
+				ConfigPlanChecks: providertest.ExpectAction(keyAddr, plancheck.ResourceActionDestroyBeforeCreate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("key"), knownvalue.StringExact("fake-secret-0001")),
+					statecheck.ExpectKnownValue(keyAddr, tfjsonpath.New("expiration_date"), knownvalue.StringExact("2027-06-30")),
+				},
+			},
+		},
+	})
+	f.AssertJSONBodies(routeCreate, createBody(`"ci"`, `"2027-06-30"`))
+	if got := f.Requests(routeDelete)[0].Path; got != "/v1/admin/api-keys/"+id {
+		t.Errorf("the replacement deleted %s, want the imported key %s", got, id)
+	}
 }
 
 // A key deleted outside Terraform plans a create.
@@ -259,7 +479,7 @@ func TestAPIKeyResourceWalksThePagesOfTheList(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
 	for i := range 120 {
-		f.seed(fmt.Sprintf("ci-%03d", i), workspaceID)
+		f.seed(fmt.Sprintf("ci-%03d", i))
 	}
 
 	resource.UnitTest(t, resource.TestCase{
@@ -364,7 +584,7 @@ func TestAPIKeyResourceValidatesItsArguments(t *testing.T) {
 func TestAPIKeyResourceImportOfAMissingKey(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
-	f.seed("other", workspaceID)
+	f.seed("other")
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
