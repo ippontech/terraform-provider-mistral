@@ -45,9 +45,12 @@ title)
 	;;
 message)
 	file=${2:?usage: $0 message <file>}
-	# git strips the comment lines of an editor message after the hook runs.
-	message=$(grep -v '^#' "${file}" || true)
-	check "Commit message" "$(head -n 1 <<<"${message}")"
+	# In the editor, the hook gets the message before git cleans it up: with
+	# its comment lines, which start with core.commentChar, and any blank line
+	# above the subject. git stripspace cleans it as git commit then does, so
+	# that its first line is the subject of the commit.
+	message=$(git stripspace --strip-comments <"${file}")
+	check "Commit message" "${message%%$'\n'*}"
 	;;
 range)
 	range=${2:?usage: $0 range <base>..<head>}

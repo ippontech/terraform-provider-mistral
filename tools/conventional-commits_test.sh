@@ -7,6 +7,10 @@ set -uo pipefail
 script="$(dirname "$0")/conventional-commits.sh"
 status=0
 
+# The message mode reads core.commentChar: the cases must not depend on the
+# user's or the system's git configuration.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+
 # expect <accept|reject> <title>
 expect() {
 	local want=$1 title=$2 got
@@ -30,19 +34,34 @@ expect reject 'feat(): add the agent resource'
 expect reject 'feat!:drop an attribute'
 expect reject 'fixup! feat: add the agent resource'
 
-# The message mode, as the commit-msg hook calls it, ignores comment lines.
+# The message mode, as the commit-msg hook calls it, checks the subject git
+# will commit: it ignores comment lines, those of core.commentChar included,
+# and blank lines above the subject.
 tmp=$(mktemp)
 trap 'rm -f "${tmp}"' EXIT
-printf '%s\n' 'docs: explain the import ID' '' '# Please enter the commit message' >"${tmp}"
-if ! "${script}" message "${tmp}" >/dev/null 2>&1; then
-	echo "FAIL: message mode rejected a valid message"
-	status=1
-fi
-printf '%s\n' 'wip' >"${tmp}"
-if "${script}" message "${tmp}" >/dev/null 2>&1; then
-	echo "FAIL: message mode accepted 'wip'"
-	status=1
-fi
+
+# expect_message <accept|reject> <case> <line>... (the lines of the message
+# file; GIT_CONFIG_* in the environment reach the script)
+expect_message() {
+	local want=$1 label=$2 got
+	shift 2
+	printf '%s\n' "$@" >"${tmp}"
+	if "${script}" message "${tmp}" >/dev/null 2>&1; then got=accept; else got=reject; fi
+	if [[ "${got}" != "${want}" ]]; then
+		echo "FAIL: message mode, ${label}: got ${got}, want ${want}"
+		status=1
+	fi
+}
+
+expect_message accept 'comment lines below' 'docs: explain the import ID' '' '# Please enter the commit message'
+expect_message reject 'wip' 'wip'
+expect_message accept 'a blank line above the subject' '' 'docs: explain the import ID' '' '# Please enter the commit message'
+expect_message accept 'a template comment and a blank line above' '# type(scope): subject' '' 'docs: explain the import ID'
+expect_message reject 'a template comment above an invalid subject' '# type(scope): subject' 'wip'
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.commentChar GIT_CONFIG_VALUE_0=';' \
+	expect_message accept 'core.commentChar ;' '; type(scope): subject' 'docs: explain the import ID' '' '; Please enter the commit message'
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.commentChar GIT_CONFIG_VALUE_0=';' \
+	expect_message reject 'core.commentChar ;, a # line is the subject' '#42 explain the import ID' 'docs: explain the import ID'
 
 # The range mode, on a scratch repository: a merge commit and a bad subject
 # fail, a linear range of valid commits passes.
