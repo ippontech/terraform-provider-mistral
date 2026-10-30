@@ -442,114 +442,204 @@ func TestKeysStableWhenANameRepeats(t *testing.T) {
 	}
 }
 
-// initScoring returns the source of an init function that holds n nested
-// ifs, so that it scores 1+2+...+n, then the statements of extra.
-func initScoring(n int, extra string) string {
-	return "\nfunc init() {\n" + strings.Repeat("if x {\n", n) + strings.Repeat("}\n", n) + extra + "}\n"
+// scoring returns the source of a function named name that holds n nested
+// ifs, so that it scores 1+2+...+n.
+func scoring(name string, n int) string {
+	return "\nfunc " + name + "() {\n" + strings.Repeat("if x {\n", n) + strings.Repeat("}\n", n) + "}\n"
 }
 
-// TestRepeatedNamesArePairedSafely checks how the declarations of a repeated
-// name are paired across the trees: unchanged ones by source, wherever they
-// moved, changed ones in place when the file keeps as many, the last two left
-// over together, and any other one as new, never under the score of another
-// declaration.
-func TestRepeatedNamesArePairedSafely(t *testing.T) {
-	t.Parallel()
-	src := func(inits ...string) []byte { return []byte("package a\n" + strings.Join(inits, "")) }
-	ten, six, one := initScoring(4, ""), initScoring(3, ""), initScoring(1, "")
-	type want struct {
-		score, base int
-		state       state
-	}
-	for _, tc := range []struct {
-		name       string
-		base, head tree
-		passes     bool
-		entries    map[string]want
-	}{
-		{
-			name:   "first of two removed, the second raised above the cap",
-			base:   tree{"internal/a/a.go": src(ten, one)},
-			head:   tree{"internal/a/a.go": src(six)},
-			passes: false,
-			entries: map[string]want{
-				"internal/a.init in internal/a/a.go":              {6, 0, added},
-				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
-			},
-		},
-		{
-			name:   "first of two removed, the second unchanged",
-			base:   tree{"internal/a/a.go": src(ten, six)},
-			head:   tree{"internal/a/a.go": src(six)},
-			passes: true,
-			entries: map[string]want{
-				"internal/a.init in internal/a/a.go":              {6, 6, unchanged},
-				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
-			},
-		},
-		{
-			name:   "two moved to another file and swapped, unchanged",
-			base:   tree{"internal/a/a.go": src(ten, six)},
-			head:   tree{"internal/a/c.go": src(six, ten)},
-			passes: true,
-			entries: map[string]want{
-				"internal/a.init in internal/a/c.go":   {6, 6, unchanged},
-				"internal/a.init in internal/a/c.go#2": {10, 10, unchanged},
-			},
-		},
-		{
-			name:   "identical in two files, one removed",
-			base:   tree{"internal/a/a.go": src(ten), "internal/a/b.go": src(ten)},
-			head:   tree{"internal/a/b.go": src(ten)},
-			passes: true,
-			entries: map[string]want{
-				"internal/a.init in internal/a/b.go": {10, 10, unchanged},
-				"internal/a.init in internal/a/a.go": {0, 10, removed},
-			},
-		},
-		{
-			name:    "moved to another file, unchanged",
-			base:    tree{"internal/a/a.go": src(ten), "internal/a/b.go": src(one)},
-			head:    tree{"internal/a/c.go": src(ten), "internal/a/b.go": src(one)},
-			passes:  true,
-			entries: map[string]want{"internal/a.init in internal/a/c.go": {10, 10, unchanged}},
-		},
-		{
-			name:    "moved to another file and lowered",
-			base:    tree{"internal/a/a.go": src(ten), "internal/a/b.go": src(one)},
-			head:    tree{"internal/a/c.go": src(six), "internal/a/b.go": src(one)},
-			passes:  true,
-			entries: map[string]want{"internal/a.init in internal/a/c.go": {6, 10, touched}},
-		},
-		{
-			name:    "both changed in place",
-			base:    tree{"internal/a/a.go": src(ten, one)},
-			head:    tree{"internal/a/a.go": src(initScoring(4, "_ = 0\n"), initScoring(2, ""))},
-			passes:  true,
-			entries: map[string]want{"internal/a.init in internal/a/a.go": {10, 10, touched}},
-		},
-		{
-			name:   "the second raised in place",
-			base:   tree{"internal/a/a.go": src(ten, one)},
-			head:   tree{"internal/a/a.go": src(ten, six)},
-			passes: false,
-			entries: map[string]want{
-				"internal/a.init in internal/a/a.go":   {10, 10, unchanged},
-				"internal/a.init in internal/a/a.go#2": {6, 1, crossed},
-			},
-		},
-	} {
+// pairingCase is a change to the declarations of a repeated name, and what
+// the ratchet must say about it at a cap of 3.
+type pairingCase struct {
+	name       string
+	base, head tree
+	passes     bool
+	entries    map[string]pairingEntry
+}
+
+// pairingEntry is what the report says about one function.
+type pairingEntry struct {
+	score, base int
+	state       state
+}
+
+// checkPairing evaluates each case through keyAcross, as run does.
+func checkPairing(t *testing.T, cases []pairingCase) {
+	t.Helper()
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			base, head := keyAcross(mustScore(t, tc.base), mustScore(t, tc.head))
 			r := evaluate(base, head, fixtureLimit)
-			got := map[string]want{}
+			got := map[string]pairingEntry{}
 			for _, e := range r.entries {
-				got[e.key] = want{e.score, e.baseScore, e.state}
+				got[e.key] = pairingEntry{e.score, e.baseScore, e.state}
 			}
 			if !reflect.DeepEqual(got, tc.entries) || r.passed() != tc.passes {
 				t.Errorf("entries %+v, passed %v; want %+v, passed %v", got, r.passed(), tc.entries, tc.passes)
 			}
 		})
+	}
+}
+
+// pkg returns the source of a file of package a holding decls.
+func pkg(decls ...string) []byte { return []byte("package a\n" + strings.Join(decls, "")) }
+
+// TestRepeatedInitsArePairedBySource checks that the init functions of a
+// package that has several are paired across the trees by their source only,
+// wherever they moved: an edited one counts as new, never compared with the
+// score of another, whether a change edits one in place, moves and edits it,
+// or deletes one and adds another.
+func TestRepeatedInitsArePairedBySource(t *testing.T) {
+	t.Parallel()
+	ten, six, one := scoring("init", 4), scoring("init", 3), scoring("init", 1)
+	checkPairing(t, []pairingCase{
+		{
+			name: "first of two removed, the second raised above the cap",
+			base: tree{"internal/a/a.go": pkg(ten, one)}, head: tree{"internal/a/a.go": pkg(six)},
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/a.go":              {6, 0, added},
+				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+		{
+			name: "first of two removed, the second unchanged",
+			base: tree{"internal/a/a.go": pkg(ten, six)}, head: tree{"internal/a/a.go": pkg(six)}, passes: true,
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/a.go":              {6, 6, unchanged},
+				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+		{
+			name: "identical in two files, one removed",
+			base: tree{"internal/a/a.go": pkg(ten), "internal/a/b.go": pkg(ten)}, head: tree{"internal/a/b.go": pkg(ten)}, passes: true,
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/b.go": {10, 10, unchanged},
+				"internal/a.init in internal/a/a.go": {0, 10, removed},
+			},
+		},
+		{
+			name: "moved to another file, unchanged",
+			base: tree{"internal/a/a.go": pkg(ten), "internal/a/b.go": pkg(one)}, head: tree{"internal/a/c.go": pkg(ten), "internal/a/b.go": pkg(one)}, passes: true,
+			entries: map[string]pairingEntry{"internal/a.init in internal/a/c.go": {10, 10, unchanged}},
+		},
+		{
+			name: "two moved to another file and swapped, unchanged",
+			base: tree{"internal/a/a.go": pkg(ten, six)}, head: tree{"internal/a/c.go": pkg(six, ten)}, passes: true,
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/c.go":   {6, 6, unchanged},
+				"internal/a.init in internal/a/c.go#2": {10, 10, unchanged},
+			},
+		},
+		{
+			name: "edited in place, lowered but above the cap",
+			base: tree{"internal/a/a.go": pkg(ten, one)}, head: tree{"internal/a/a.go": pkg(six, one)},
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/a.go":              {6, 0, added},
+				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+		{
+			name: "edited in place, brought to the cap",
+			base: tree{"internal/a/a.go": pkg(ten, one)}, head: tree{"internal/a/a.go": pkg(scoring("init", 2), one)}, passes: true,
+			entries: map[string]pairingEntry{"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed}},
+		},
+		{
+			name: "the second raised in place",
+			base: tree{"internal/a/a.go": pkg(ten, one)}, head: tree{"internal/a/a.go": pkg(ten, six)},
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/a.go":   {10, 10, unchanged},
+				"internal/a.init in internal/a/a.go#2": {6, 0, added},
+			},
+		},
+		{
+			name: "grandfathered deleted, a new one above the cap in another file",
+			base: tree{"internal/a/a.go": pkg(ten), "internal/a/b.go": pkg(one)}, head: tree{"internal/a/b.go": pkg(one), "internal/a/c.go": pkg(six)},
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/c.go": {6, 0, added},
+				"internal/a.init in internal/a/a.go": {0, 10, removed},
+			},
+		},
+		{
+			name: "grandfathered deleted, a new one above the cap in its file",
+			base: tree{"internal/a/a.go": pkg(ten, one)}, head: tree{"internal/a/a.go": pkg(one, six)},
+			entries: map[string]pairingEntry{
+				"internal/a.init in internal/a/a.go#2":            {6, 0, added},
+				"internal/a.init in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+		{
+			name: "functions named _ too",
+			base: tree{"internal/a/a.go": pkg(scoring("_", 4), scoring("_", 1))}, head: tree{"internal/a/a.go": pkg(scoring("_", 3), scoring("_", 1))},
+			entries: map[string]pairingEntry{
+				"internal/a._ in internal/a/a.go":              {6, 0, added},
+				"internal/a._ in internal/a/a.go (merge base)": {0, 10, removed},
+			},
+		},
+	})
+}
+
+// TestBuildTaggedTwinsArePairedByFile checks that the declarations of a
+// repeated name other than init, one per build-tagged file, are paired by
+// file when their source changed: Go allows one declaration of such a name
+// per file. A twin that moves and changes counts as new.
+func TestBuildTaggedTwinsArePairedByFile(t *testing.T) {
+	t.Parallel()
+	ten, six, one := scoring("F", 4), scoring("F", 3), scoring("F", 1)
+	checkPairing(t, []pairingCase{
+		{
+			name: "edited in place, lowered",
+			base: tree{"internal/a/f_linux.go": pkg(ten), "internal/a/f_windows.go": pkg(one)},
+			head: tree{"internal/a/f_linux.go": pkg(six), "internal/a/f_windows.go": pkg(one)}, passes: true,
+			entries: map[string]pairingEntry{"internal/a.F in internal/a/f_linux.go": {6, 10, touched}},
+		},
+		{
+			name: "raised in place",
+			base: tree{"internal/a/f_linux.go": pkg(ten), "internal/a/f_windows.go": pkg(one)},
+			head: tree{"internal/a/f_linux.go": pkg(ten), "internal/a/f_windows.go": pkg(six)},
+			entries: map[string]pairingEntry{
+				"internal/a.F in internal/a/f_linux.go":   {10, 10, unchanged},
+				"internal/a.F in internal/a/f_windows.go": {6, 1, crossed},
+			},
+		},
+		{
+			name: "a method named init, edited in place",
+			base: tree{"internal/a/f_linux.go": pkg(scoring("(T) init", 4)), "internal/a/f_windows.go": pkg(scoring("(T) init", 1))},
+			head: tree{"internal/a/f_linux.go": pkg(scoring("(T) init", 3)), "internal/a/f_windows.go": pkg(scoring("(T) init", 1))}, passes: true,
+			entries: map[string]pairingEntry{"internal/a.(T).init in internal/a/f_linux.go": {6, 10, touched}},
+		},
+		{
+			name: "moved to another file and edited",
+			base: tree{"internal/a/f_linux.go": pkg(ten), "internal/a/f_windows.go": pkg(one)},
+			head: tree{"internal/a/f_unix.go": pkg(six), "internal/a/f_windows.go": pkg(one)},
+			entries: map[string]pairingEntry{
+				"internal/a.F in internal/a/f_unix.go":  {6, 0, added},
+				"internal/a.F in internal/a/f_linux.go": {0, 10, removed},
+			},
+		},
+	})
+}
+
+// TestReportExplainsEditedInits checks that a failure on an init among
+// several says why it counts as new and what to do, and that other failures
+// do not.
+func TestReportExplainsEditedInits(t *testing.T) {
+	t.Parallel()
+	ten, six, one := scoring("init", 4), scoring("init", 3), scoring("init", 1)
+	base, head := keyAcross(mustScore(t, tree{"internal/a/a.go": pkg(ten, one)}), mustScore(t, tree{"internal/a/a.go": pkg(six, one)}))
+	out := reportOf(t, evaluate(base, head, fixtureLimit))
+	for _, want := range []string{
+		"| `internal/a.init in internal/a/a.go` | `internal/a/a.go:3` | 6 | - | **FAIL**: new function above 3 (an edited `init` among several counts as new) |",
+		"| `internal/a.init in internal/a/a.go (merge base)` | `internal/a/a.go:3` | - | 10 | gone: deleted, edited (an edited `init` among several counts as new) or moved to another package |",
+		"An `init` function of a package that has several is matched with the merge base by its source only",
+		"move its logic into named functions that score 3 or less each.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+	base, head = keyAcross(mustScore(t, tree{"internal/a/a.go": pkg(scoring("F", 1))}), mustScore(t, tree{"internal/a/a.go": pkg(scoring("F", 3))}))
+	if out := reportOf(t, evaluate(base, head, fixtureLimit)); strings.Contains(out, "`init`") {
+		t.Errorf("a failure on another function speaks of init:\n%s", out)
 	}
 }

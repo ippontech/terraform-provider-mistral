@@ -68,6 +68,13 @@ type function struct {
 	// src is the declaration from `func` to the closing brace: when it
 	// differs between the two trees, the change touched the function.
 	src []byte
+	// nameless marks an init function or a function named _: Go lets a file
+	// declare these names more than once, so the name says nothing about
+	// which function a declaration is.
+	nameless bool
+	// sourceOnly marks a nameless declaration among several of its name in
+	// one tree: matchRepeated pairs it by its source only.
+	sourceOnly bool
 }
 
 // scoreTree scores every function declared in the files of t, generated
@@ -90,7 +97,9 @@ func scoreTree(t tree) ([]function, error) {
 // keyAcross indexes the functions of the merge base and of the working tree
 // by key, so that evaluate compares each function with its own former
 // version. A name declared at most once in each tree keeps its plain key: the
-// function is matched by package and name, wherever it moved in its package.
+// function is matched by package and name, wherever it moved in its package;
+// so is the only init of a package, which nothing else could be confused
+// with.
 // The declarations of a name declared more than once in either tree (init
 // functions, build-tagged twins) are paired by matchRepeated and keyed by
 // keyRepeated.
@@ -140,11 +149,13 @@ func keyRepeated(b, h []function, baseOut, headOut map[string]function) {
 	headKeys := positionKeys(h)
 	for j, fn := range h {
 		fn.key = headKeys[j]
+		fn.sourceOnly = fn.nameless
 		headOut[fn.key] = fn
 	}
 	baseKeys := positionKeys(b)
 	for i, j := range matchRepeated(b, h) {
 		fn := b[i]
+		fn.sourceOnly = fn.nameless
 		switch {
 		case j >= 0:
 			fn.key = headKeys[j]
@@ -175,31 +186,31 @@ func positionKeys(fns []function) []string {
 
 // matchRepeated pairs the declarations of one name at the merge base (b) with
 // those of the working tree (h), and returns for each of b the index of its
-// pair in h, -1 when it has none. Four passes, each over the declarations the
-// passes before left unpaired, in file then declaration order:
+// pair in h, -1 when it has none. It pairs only on evidence, in three passes,
+// each over the declarations the passes before left unpaired, in file then
+// declaration order:
 //
 //  1. same file and same source: unchanged;
 //  2. same source: unchanged, moved to another file of the package;
-//  3. same file, by order within the file, when the file holds as many
-//     unpaired declarations in both trees: changed in place;
-//  4. the last unpaired declaration of each tree, when only one is left in
-//     each: changed, and moved or not, as a name declared once may be.
+//  3. same file, for a name that is not nameless (a build-tagged twin): Go
+//     allows one declaration of such a name per file, so the file and the
+//     name identify it as a name declared once does: changed in place.
 //
-// Any other declaration stays unpaired: new in the working tree, gone from the
-// merge base. A changed declaration whose former version cannot be told apart
-// is thus reported as new, never compared with the score of another
-// declaration. The one guess is pass 3: it takes a change to keep the order
-// of a name's declarations within a file, and pairs two declarations that
-// swapped places and changed with each other's former versions.
+// Any other declaration stays unpaired, new in the working tree or gone from
+// the merge base, and is never compared with the score of another
+// declaration. Among several init functions, nothing but the source tells
+// one from another, neither the name nor the position: an init that a change
+// edits counts as new, and must score the cap or less even when it was above
+// it at the merge base; the report says so (writeReport).
 func matchRepeated(b, h []function) []int {
 	m := matching{base: b, head: h, partner: slices.Repeat([]int{-1}, len(b)), taken: make([]bool, len(h))}
 	m.pair(func(bf, hf function) bool { return bf.file == hf.file && bytes.Equal(bf.src, hf.src) })
 	m.pair(func(bf, hf function) bool { return bytes.Equal(bf.src, hf.src) })
-	baseLeft, headLeft := m.unpairedByFile()
-	m.pair(func(bf, hf function) bool { return bf.file == hf.file && baseLeft[bf.file] == headLeft[bf.file] })
-	baseLeft, headLeft = m.unpairedByFile()
-	if sum(baseLeft) == 1 && sum(headLeft) == 1 {
-		m.pair(func(function, function) bool { return true })
+	if !slices.ContainsFunc(append(slices.Clone(b), h...), func(fn function) bool { return fn.nameless }) {
+		baseLeft, headLeft := m.unpairedByFile()
+		m.pair(func(bf, hf function) bool {
+			return bf.file == hf.file && baseLeft[bf.file] == 1 && headLeft[bf.file] == 1
+		})
 	}
 	return m.partner
 }
@@ -245,15 +256,6 @@ func (m *matching) unpairedByFile() (base, head map[string]int) {
 	return base, head
 }
 
-// sum adds up the counts of a map.
-func sum(counts map[string]int) int {
-	n := 0
-	for _, c := range counts {
-		n += c
-	}
-	return n
-}
-
 // scoreFile scores the functions declared in one file, none when the file is
 // generated, each keyed by its package directory and name.
 func scoreFile(name string, src []byte) ([]function, error) {
@@ -274,11 +276,12 @@ func scoreFile(name string, src []byte) ([]function, error) {
 		}
 		start, end := fset.Position(fd.Pos()), fset.Position(fd.End())
 		fns = append(fns, function{
-			key:   path.Dir(name) + "." + funcName(fd),
-			file:  name,
-			line:  start.Line,
-			score: gocognit.ScanComplexityWithRecursion(fd, recursive[fd], false).Complexity,
-			src:   bytes.Clone(src[start.Offset:end.Offset]),
+			key:      path.Dir(name) + "." + funcName(fd),
+			file:     name,
+			line:     start.Line,
+			score:    gocognit.ScanComplexityWithRecursion(fd, recursive[fd], false).Complexity,
+			src:      bytes.Clone(src[start.Offset:end.Offset]),
+			nameless: fd.Name.Name == "_" || (fd.Recv == nil && fd.Name.Name == "init"),
 		})
 	}
 	return fns, nil
