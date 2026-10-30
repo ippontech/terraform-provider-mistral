@@ -175,7 +175,8 @@ paths:
 // TestAmbiguousRouteIsReported checks that a route matching several
 // operations, none of them the only one without a suffix, is named with
 // their paths and fails the command, while the other routes are still
-// fingerprinted by -update and checked.
+// fingerprinted by -update and checked; -update keeps the committed
+// fingerprint of the ambiguous route.
 func TestAmbiguousRouteIsReported(t *testing.T) {
 	t.Parallel()
 	root, specPath := repo(t)
@@ -196,6 +197,34 @@ func TestAmbiguousRouteIsReported(t *testing.T) {
 	}
 	if want := fingerprintOf(t, specAmbiguous, "GET /v1/agents/{agent_id}"); written["GET /v1/agents/{agent_id}"] != want || written["DELETE /v1/connectors/{id}"] != ambiguous {
 		t.Errorf("update wrote %v, want GET at %s and DELETE %s", written, want, ambiguous)
+	}
+
+	// Fingerprinted while it matched one operation, the route keeps that
+	// fingerprint through an -update that finds it ambiguous, and the other
+	// route is rewritten.
+	specOne, _, _ := strings.Cut(specAmbiguous, "  /v1/connectors/{connector_name}#name:")
+	writeSpec(specOne)
+	if code, out := runCmd("-spec", specPath, "-root", root, "-update"); code != 0 {
+		t.Fatalf("update, one operation: %d %s", code, out)
+	}
+	known := fingerprintOf(t, specOne, "DELETE /v1/connectors/{id}")
+	retyped := edit(t, specAmbiguous, "properties: {id: {type: string}}", "properties: {id: {type: string}, name: {type: string}}")
+	writeSpec(retyped)
+	if code, out := runCmd("-spec", specPath, "-root", root, "-update"); code != 2 || !strings.Contains(out, "its fingerprint stays "+known) {
+		t.Errorf("update, ambiguous again: %d %s", code, out)
+	}
+	if written, err = readFingerprints(filepath.Join(root, fingerprintsFile)); err != nil {
+		t.Fatal(err)
+	}
+	if want := fingerprintOf(t, retyped, "GET /v1/agents/{agent_id}"); written["DELETE /v1/connectors/{id}"] != known || written["GET /v1/agents/{agent_id}"] != want {
+		t.Errorf("update wrote %v, want DELETE kept at %s and GET at %s", written, known, want)
+	}
+	writeSpec(specAmbiguous)
+	if code, out := runCmd("-spec", specPath, "-root", root, "-update"); code != 2 {
+		t.Fatalf("update: %d %s", code, out)
+	}
+	if written, err = readFingerprints(filepath.Join(root, fingerprintsFile)); err != nil {
+		t.Fatal(err)
 	}
 
 	// A route fingerprinted before the specification made it ambiguous is

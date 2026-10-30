@@ -26,7 +26,8 @@
 // It exits 1 when an operation changed, disappeared, is new to the
 // fingerprints file or matches several operations of the specification, and
 // 2 on a usage or input error. With -update, it rewrites every fingerprint it
-// can, and exits 2 when a route matches several operations.
+// can, keeps the committed one of a route that matches several operations,
+// and then exits 2.
 package main
 
 import (
@@ -37,6 +38,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -102,21 +104,48 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 // rewrite writes the fingerprints file. A route that matches several
-// operations is written with the fingerprint "ambiguous" and named on stderr,
-// and rewrite then returns 2: the other routes are still rewritten.
+// operations keeps its committed fingerprint (keepCommitted) and is named on
+// stderr, and rewrite then returns 2: the other routes are still rewritten.
 func rewrite(path string, current map[string]string, ambiguities map[string][]string, stdout, stderr io.Writer) int {
-	if err := os.WriteFile(path, []byte(format(current)), 0o600); err != nil {
+	written, err := keepCommitted(path, current, ambiguities)
+	if err == nil {
+		err = os.WriteFile(path, []byte(format(written)), 0o600)
+	}
+	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "specdrift:", err)
 		return 2
 	}
-	_, _ = fmt.Fprintf(stdout, "wrote %d fingerprints to %s\n", len(current), fingerprintsFile)
+	_, _ = fmt.Fprintf(stdout, "wrote %d fingerprints to %s\n", len(written), fingerprintsFile)
 	for _, r := range slices.Sorted(maps.Keys(ambiguities)) {
-		_, _ = fmt.Fprintf(stderr, "specdrift: %s matches several operations of the specification (%s): written as %s\n", r, strings.Join(ambiguities[r], ", "), ambiguous)
+		_, _ = fmt.Fprintf(stderr, "specdrift: %s matches several operations of the specification (%s): its fingerprint stays %s\n", r, strings.Join(ambiguities[r], ", "), written[r])
 	}
 	if len(ambiguities) > 0 {
 		return 2
 	}
 	return 0
+}
+
+// keepCommitted returns current with the fingerprint committed in the file at
+// path for each ambiguous route, and ambiguous for one that has none. Once
+// pick learns which operation the route calls, the check then compares that
+// operation with the last contract verified, instead of taking whatever it
+// has become as the new baseline. The file is read only when a route is
+// ambiguous, and a missing file commits nothing.
+func keepCommitted(path string, current map[string]string, ambiguities map[string][]string) (map[string]string, error) {
+	if len(ambiguities) == 0 {
+		return current, nil
+	}
+	committed, err := readFingerprints(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	written := maps.Clone(current)
+	for r := range ambiguities {
+		if fp, ok := committed[r]; ok {
+			written[r] = fp
+		}
+	}
+	return written, nil
 }
 
 // checkRoutes fails when the fingerprints file and the fakes list different
