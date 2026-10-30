@@ -4,12 +4,16 @@
 package client
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -126,11 +130,350 @@ func TestDoReportsAnUnencodableBody(t *testing.T) {
 func TestNewDefaults(t *testing.T) {
 	t.Parallel()
 	c := New(Config{BaseURL: "https://example.com/"})
-	if c.cfg.BaseURL != "https://example.com" || c.http != http.DefaultClient {
+	if c.cfg.BaseURL != "https://example.com" {
 		t.Errorf("New = %+v", c.cfg)
 	}
 	if c := New(Config{}); c.cfg.BaseURL != DefaultBaseURL {
 		t.Errorf("default base URL = %q", c.cfg.BaseURL)
+	}
+	own := &http.Client{}
+	if c := New(Config{HTTPClient: own}); c.http != own || c.upload != own {
+		t.Error("a configured HTTPClient must send every call, uploads included")
+	}
+}
+
+// Without a configured HTTPClient, the client bounds the wait for the
+// headers of an answer, except for uploads, on copies of
+// http.DefaultTransport, and sets no overall timeout, which would cut a long
+// upload.
+func TestNewBoundsTheWaitForAnAnswer(t *testing.T) {
+	t.Parallel()
+	c := New(Config{})
+	calls, uploads := copyOfDefaultTransport(t, c.http), copyOfDefaultTransport(t, c.upload)
+	if got := calls.ResponseHeaderTimeout; got != responseHeaderTimeout || got < time.Minute {
+		t.Errorf("ResponseHeaderTimeout = %v, want %v, and a minute at least so that a slow answer is not cut", got, responseHeaderTimeout)
+	}
+	if got := uploads.ResponseHeaderTimeout; got != 0 {
+		t.Errorf("ResponseHeaderTimeout of the uploads = %v, want none", got)
+	}
+}
+
+// copyOfDefaultTransport returns the transport of hc, after checking that
+// it is a copy of http.DefaultTransport, proxy settings included, and that
+// hc sets no overall timeout.
+func copyOfDefaultTransport(t *testing.T, hc *http.Client) *http.Transport {
+	t.Helper()
+	transport, ok := hc.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", hc.Transport)
+	}
+	if transport == http.DefaultTransport || transport.Proxy == nil {
+		t.Error("the transport must be a copy of http.DefaultTransport, proxy settings included")
+	}
+	if hc.Timeout != 0 {
+		t.Errorf("http.Client.Timeout = %v, want none", hc.Timeout)
+	}
+	return transport
+}
+
+// A server that accepts the connection and never answers fails the call
+// once the header timeout has passed on each attempt, instead of blocking
+// it. A read is replayed after such a timeout, like after any connection
+// error.
+func TestAServerThatNeverAnswersTimesOut(t *testing.T) {
+	t.Parallel()
+	srv := sdktest.NewServer(t)
+	srv.Handle("GET /v1/agents/{agent_id}", func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // until the client gives up and closes the connection
+	})
+	c := newClient(Config{BaseURL: srv.URL, Retry: fastRetry}, 20*time.Millisecond)
+	// Counted at the transport: under load, an attempt can time out before
+	// the fake has dispatched it to the handler.
+	transport := &countingTransport{next: c.http.Transport}
+	c.http.Transport = transport
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := c.GetAgent(ctx, "ag_1")
+	if netErr, ok := errors.AsType[net.Error](err); !ok || !netErr.Timeout() {
+		t.Errorf("err = %v, want a timeout", err)
+	}
+	if ctx.Err() != nil {
+		t.Error("the call ran until the context ended, not until the header timeout")
+	}
+	if got := transport.n.Load(); got != 4 {
+		t.Errorf("%d attempts, want 1 + MaxRetries", got)
+	}
+}
+
+// An upload is not bounded by the header timeout, which a proxy that
+// buffers the whole upload would make count its own transfer, while a create
+// with a JSON body answered later still is cut and, being a create, not
+// replayed.
+func TestAnUploadIsNotCutByTheHeaderTimeout(t *testing.T) {
+	t.Parallel()
+	const headerTimeout = 20 * time.Millisecond
+	srv := sdktest.NewServer(t)
+	// answerAfter answers after delay, counted from when the handler runs,
+	// so never before the request is written, unless the client gives up
+	// first. The upload's ten times the header timeout is late enough for a
+	// bounded upload to fail; the create's 10 s is a margin no delayed timer
+	// on a loaded machine reaches, and the handler returns as soon as the
+	// client closes the connection, so the test does not wait for it.
+	answerAfter := func(delay time.Duration, body map[string]any) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(delay):
+				sdktest.WriteJSON(w, http.StatusCreated, body)
+			}
+		}
+	}
+	srv.Handle("POST /v1/libraries/{library_id}/documents", answerAfter(10*headerTimeout, document))
+	srv.Handle("POST /v1/libraries", answerAfter(10*time.Second, library))
+	c := newClient(Config{BaseURL: srv.URL, Retry: fastRetry}, headerTimeout)
+	// Attempts are counted at the client's transports: the create times out
+	// and returns before the fake has necessarily run its handler, so the
+	// fake's own count can still be 0 when the test checks it.
+	calls, uploads := &countingTransport{next: c.http.Transport}, &countingTransport{next: c.upload.Transport}
+	c.http.Transport, c.upload.Transport = calls, uploads
+	ctx := context.Background()
+
+	if _, created, err := c.UploadDocument(ctx, "lib_1", textFile("a.txt", "a")); err != nil || !created {
+		t.Errorf("UploadDocument = %v, %v, want a new document", created, err)
+	}
+	_, err := c.CreateLibrary(ctx, CreateLibraryRequest{Name: "n", OwnerType: "Workspace"})
+	if netErr, ok := errors.AsType[net.Error](err); !ok || !netErr.Timeout() {
+		t.Errorf("CreateLibrary err = %v, want a timeout", err)
+	}
+	if got := uploads.n.Load(); got != 1 {
+		t.Errorf("%d upload attempts, want 1", got)
+	}
+	if got := calls.n.Load(); got != 1 {
+		t.Errorf("%d create attempts, want 1: a create that timed out is not replayed", got)
+	}
+}
+
+// failedWriteTransport fails its first attempt as a broken connection does:
+// GotConn reports the connection, reused or new, the write of the request
+// fails, WroteRequest reports the error, and RoundTrip returns it. Later
+// attempts answer 201.
+type failedWriteTransport struct {
+	reused   bool
+	attempts atomic.Int64
+}
+
+// RoundTrip fails the first attempt and answers the others.
+func (tr *failedWriteTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Body != nil {
+		_ = r.Body.Close()
+	}
+	if tr.attempts.Add(1) == 1 {
+		err := errors.New("write tcp: broken pipe")
+		trace := httptrace.ContextClientTrace(r.Context())
+		trace.GotConn(httptrace.GotConnInfo{Reused: tr.reused})
+		trace.WroteRequest(httptrace.WroteRequestInfo{Err: err})
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{}`)),
+		Request:    r,
+	}, nil
+}
+
+// A create whose write failed on a reused connection never reached the
+// server whole: it is replayed. On a new connection, the failed write
+// counts as sent, as a refusal mid-body does (see
+// TestAnUploadRefusedMidBodyIsNotReplayed): the create is not replayed.
+func TestACreateWhoseWriteFailedIsReplayedOnAReusedConnectionOnly(t *testing.T) {
+	t.Parallel()
+	for name, reused := range map[string]bool{"reused": true, "new": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			transport := &failedWriteTransport{reused: reused}
+			c := New(Config{BaseURL: "https://api.example", HTTPClient: &http.Client{Transport: transport}, Retry: fastRetry})
+
+			err := c.do(context.Background(), call{method: http.MethodPost, path: "/v1/libraries", body: map[string]any{}, audience: workspaceKey}, nil)
+			want := int64(1)
+			if reused {
+				want = 2
+			}
+			if (err == nil) != reused {
+				t.Errorf("err = %v, want an error only on a new connection", err)
+			}
+			if got := transport.attempts.Load(); got != want {
+				t.Errorf("%d attempts, want %d", got, want)
+			}
+		})
+	}
+}
+
+// rawServer serves HTTP/1.1 on a bare listener, so that a test can drop a
+// connection in the middle of a request as a real server or proxy does,
+// which httptest's server does not. handle gets each request with its body
+// unread, numbered from 1 across connections, and answers it on c; the
+// connection is closed, unread data and all, when handle returns false.
+// rawServer returns the base URL and the count of accepted connections.
+func rawServer(t *testing.T, handle func(c net.Conn, r *http.Request, n int64) (keepAlive bool)) (string, *atomic.Int64) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		accepted, requests atomic.Int64
+		mu                 sync.Mutex
+		open               []net.Conn
+	)
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range open {
+			_ = c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			mu.Lock()
+			open = append(open, c)
+			mu.Unlock()
+			go func() {
+				defer func() { _ = c.Close() }()
+				br := bufio.NewReader(c)
+				for {
+					r, err := http.ReadRequest(br)
+					if err != nil || !handle(c, r, requests.Add(1)) {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return "http://" + ln.Addr().String(), &accepted
+}
+
+// largeFile is a 32 MB document, more than the kernel buffers of a loopback
+// connection hold, so that a server that stops reading breaks its write.
+func largeFile() DocumentFile {
+	return DocumentFile{Filename: "large.bin", Open: func() (io.ReadCloser, error) {
+		return io.NopCloser(io.LimitReader(zeros{}, 32<<20)), nil
+	}}
+}
+
+// zeros reads as an endless run of zero bytes.
+type zeros struct{}
+
+// Read fills p with zeros.
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+// A server or proxy that refuses an upload before reading it (a 413 for a
+// file too large) and closes the connection breaks the write of the body.
+// net/http then returns the broken write in most runs, and the 413 when it
+// read the answer first; a server that drops the connection without an
+// answer always gives the broken write. On a new connection that write
+// counts as sent: the upload is not sent three more times only to be
+// refused again.
+func TestAnUploadRefusedMidBodyIsNotReplayed(t *testing.T) {
+	t.Parallel()
+	answers := map[string]string{
+		"refused with a 413":        "HTTP/1.1 413 Request Entity Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+		"dropped without an answer": "",
+	}
+	for name, answer := range answers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			url, connections := rawServer(t, func(c net.Conn, _ *http.Request, _ int64) bool {
+				_, _ = io.WriteString(c, answer)
+				return false
+			})
+			c := New(Config{BaseURL: url, Retry: fastRetry})
+
+			if _, _, err := c.UploadDocument(context.Background(), "lib_1", largeFile()); err == nil {
+				t.Error("the upload succeeded")
+			}
+			if got := connections.Load(); got != 1 {
+				t.Errorf("%d attempts, want 1", got)
+			}
+		})
+	}
+}
+
+// An upload on a kept-alive connection that the server has closed in the
+// meantime breaks while its body is written: the server never got it, so it
+// is replayed, on a new connection.
+func TestAnUploadOnAClosedKeepAliveConnectionIsReplayed(t *testing.T) {
+	t.Parallel()
+	url, connections := rawServer(t, func(c net.Conn, r *http.Request, n int64) bool {
+		if n == 2 {
+			return false // the second request finds the connection closed
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(c, "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}")
+		return true
+	})
+	c := New(Config{BaseURL: url, Retry: fastRetry})
+	ctx := context.Background()
+
+	if _, _, err := c.UploadDocument(ctx, "lib_1", textFile("a.txt", "a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.UploadDocument(ctx, "lib_1", largeFile()); err != nil {
+		t.Errorf("err = %v, want the 201 of the replay", err)
+	}
+	if got := connections.Load(); got != 2 {
+		t.Errorf("%d connections, want the kept-alive one and the replay's", got)
+	}
+}
+
+// lateTraceTransport answers at once and reports the end of the write
+// afterwards, from a goroutine of its own. net/http does the same when a
+// server answers before reading the whole body, and the httptrace contract
+// allows it: a hook may be called after the request has completed.
+type lateTraceTransport struct {
+	// reported is closed once the hook has run.
+	reported chan struct{}
+}
+
+// RoundTrip answers 413 at once, then closes the body and calls WroteRequest
+// from a goroutine of its own.
+func (tr lateTraceTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	trace := httptrace.ContextClientTrace(r.Context())
+	go func() {
+		defer close(tr.reported)
+		_ = r.Body.Close()
+		trace.WroteRequest(httptrace.WroteRequestInfo{})
+	}()
+	return &http.Response{
+		StatusCode: http.StatusRequestEntityTooLarge,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"detail":"file too large"}`)),
+		Request:    r,
+	}, nil
+}
+
+// A write that the transport reports after the answer is back is read
+// without a data race: run under -race, as make test does, this test fails
+// if send records the write in a plain variable.
+func TestSendReadsALateWriteReportWithoutARace(t *testing.T) {
+	t.Parallel()
+	transport := lateTraceTransport{reported: make(chan struct{})}
+	c := New(Config{BaseURL: "https://api.example", HTTPClient: &http.Client{Transport: transport}, Retry: fastRetry})
+
+	err := c.do(context.Background(), call{method: http.MethodPost, path: "/v1/libraries/lib_1/documents", body: map[string]any{}, audience: workspaceKey}, nil)
+	<-transport.reported
+	if StatusCode(err) != http.StatusRequestEntityTooLarge {
+		t.Errorf("err = %v, want the 413", err)
 	}
 }
 
