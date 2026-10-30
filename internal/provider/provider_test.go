@@ -134,6 +134,26 @@ func TestConfigureReadsEnvironment(t *testing.T) {
 	}
 }
 
+// WithoutEnvironment, which internal/providertest sets for every fake test,
+// leaves the keys empty and the server URL at its default, whatever the
+// environment holds, and still takes the configured values.
+func TestWithoutEnvironmentIgnoresTheEnvironment(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envAPIKey, "env-key")
+	t.Setenv(envAdminAPIKey, "env-admin")
+	t.Setenv(envServerURL, "https://env.example.com")
+
+	pd := providerData(t, configure(t, nil, WithoutEnvironment()))
+	if pd.APIKey != "" || pd.AdminAPIKey != "" || pd.ServerURL != DefaultServerURL {
+		t.Errorf("got %+v, want no key and the default server URL", *pd)
+	}
+
+	pd = providerData(t, configure(t, map[string]tftypes.Value{"api_key": str("config-key")}, WithoutEnvironment()))
+	if pd.APIKey != "config-key" || pd.AdminAPIKey != "" {
+		t.Errorf("credentials = %q, %q, want the configured key only", pd.APIKey, pd.AdminAPIKey)
+	}
+}
+
 func TestConfigurationWinsOverEnvironment(t *testing.T) {
 	clearEnv(t)
 	t.Setenv(envAPIKey, "env-key")

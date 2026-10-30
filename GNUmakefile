@@ -36,7 +36,12 @@ generate:
 	cd tools; go generate -tags generate ./...
 
 # COVERPROFILE=<file> also writes a coverage profile (the CI test job does).
+# The unit tests run with dummy keys in the environment, in place of the
+# developer's: a test against the fake must never read them
+# (providertest.ProviderFactories sets provider.WithoutEnvironment), and one
+# that did would fail, or at worst send these values to the fake.
 test:
+	MISTRAL_API_KEY=env-key-must-not-be-read MISTRAL_ADMIN_API_KEY=env-admin-key-must-not-be-read \
 	go test -v -race -shuffle=on -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=300s -parallel=10 ./...
 
 # Unit tests, then the coverage gate of the CI coverage job (.coverage.json,

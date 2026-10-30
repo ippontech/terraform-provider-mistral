@@ -82,7 +82,7 @@ The code is read more often than it is written, by people and by agents that hav
 
 ## Testing
 
-Unit tests need no credential and no network. Acceptance tests (`TestAcc` prefix, `resource.Test`) need `TF_ACC=1` and real keys, and create real objects.
+Unit tests need no credential and no network, and never read one from the environment: `make test` runs them with dummy `MISTRAL_API_KEY` and `MISTRAL_ADMIN_API_KEY`. Acceptance tests (`TestAcc` prefix, `resource.Test`) need `TF_ACC=1` and real keys, and create real objects.
 
 **The standard for each resource, against the fake API** (`resource.UnitTest`, `internal/sdktest`, `internal/providertest`):
 
@@ -99,7 +99,7 @@ For each data source: exact values, an empty list, two pages or more through the
 
 - **`internal/client`**: a typed call builds a `call` (method, path from `escapePath`, query, JSON `body` or multipart `form`, `audience`, and `idempotent: true` for a documented upsert) and passes it to `do`, which authenticates, retries by the policy above and decodes. Lists go through `walkCursor`, `walkPages` (first page 0 or 1, total or -1) or `walkOffset`, with `collect` or `find`. Errors are `*client.Error`; test them with `client.IsNotFound`, `IsConflict` or `StatusCode`. Client tests are internal (`package client`) and build their client with `newTestClient(srv)`, which carries the production rules with millisecond delays.
 - **`internal/sdktest`**: `NewServer(t)` with `Handle`/`Respond` routes in `net/http.ServeMux` syntax (`"GET /v1/agents/{agent_id}"`), `FailNext`, `FailNextWith`, `ResetNext`, `SetMaxRequests`, and the assertions `AssertCalled`, `AssertCredential` (`sdktest.APIKey` or `AdminKey`), `AssertQueries`, `AssertJSONBodies` (compared with `JSONDiff`: an absent key, null and `""` differ). Answers: `WriteJSON`, `WriteError` (`{"detail": "..."}`), `WriteValidationError` (422). State: `NewCollection(key)` (`Create`, `Put`, `Get`, `Patch`, `Delete`, `List`, `Len`), `NewUUID`, and the page helpers `PageOf`, `OffsetOf`, `CursorOf`, `QueryInt`. Multipart: `ReadParts`, `Request.Parts`.
-- **`internal/providertest`**: `ProviderFactories(srv)` (the provider pointed at the fake, with millisecond retries), `ProviderConfig()` (both dummy keys, so the environment never fills them) and `ExpectAction(addr, action)` (the planned action before the apply, an empty plan after it).
+- **`internal/providertest`**: `ProviderFactories(srv)` (the provider pointed at the fake, with millisecond retries, reading no environment variable: `provider.WithoutEnvironment`), `ProviderConfig()` (both dummy keys, so the environment never fills them) and `ExpectAction(addr, action)` (the planned action before the apply, an empty plan after it).
 - **`internal/acctest`**: `PreCheck(t)`, `PreCheckAdmin(t)` (skips without an Admin API key), `SkipUnlessAcc(t)`, `ProtoV6ProviderFactories`, `RandomName(prefix)`, and `Fixture(t, name)` for an object of the test organization that a test cannot create: `EnvWorkspaceID` (`MISTRAL_ACC_WORKSPACE_ID`, the workspace of `MISTRAL_API_KEY`), `EnvAdminUserID` (`MISTRAL_ACC_ADMIN_USER_ID`) and `EnvMemberUserID` (`MISTRAL_ACC_MEMBER_USER_ID`). Add a variable there, never in a test, and pass it in `testacc.yml`.
 - **Configure**: every resource and data source calls `providerdata.Configure(req.ProviderData, providerdata.Workspace, &resp.Diagnostics)` (or `Admin`) and returns when it gives nil.
 
