@@ -5,7 +5,9 @@ A Terraform and OpenTofu provider for [Mistral AI](https://mistral.ai):
 - in a workspace, with a standard API key: agents, libraries and their documents, connectors, prompts, skills and service accounts;
 - in an organization, with an Admin API key: workspaces, API keys, invites, user groups and the spend limit. The Admin API is available on Enterprise plans only.
 
-Nothing is released yet. The provider will be published as `ippontech/mistral` on the Terraform Registry and the OpenTofu Registry.
+**Alpha.** No resource or data source has been tested against the live Mistral API yet: each one is tested against a fake of the API written from Mistral's documentation, and its documentation page says so. Until 1.0.0, a minor version can rename or change attributes and behaviors: pin the provider version and read the release notes before upgrading.
+
+Releases are published as `ippontech/mistral` on the Terraform Registry and the OpenTofu Registry, from `v0.1.0`.
 
 ## Usage
 

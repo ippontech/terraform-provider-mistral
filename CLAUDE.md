@@ -113,7 +113,7 @@ Fake-API tests live in `package <area>_test`, in files named `<name>_fake_test.g
 
 Everything else is a canned response set up by the test that needs it. A fake encodes our reading of the documentation: when an acceptance run contradicts it, fix the fake first.
 
-**Acceptance tests** run against a dedicated Mistral organization, after every merge to `main` and on demand, never automatically on a pull request from a fork. Until Mistral grants Enterprise access, the Admin API types stay `fakeOnly` and their pages say they were not verified against the live API.
+**Acceptance tests** run against a dedicated Mistral organization, after every merge to `main` and on demand, never automatically on a pull request from a fork. Until Mistral grants Enterprise access, the Admin API types stay `fakeOnly` and their pages say they were not verified against the live API. While no type is `acceptanceTested`, the provider is an alpha: the index page opens with the alpha notice (`~> **Alpha.**`), and `internal/provider/docs_test.go` fails when the notice and the registry disagree, so the first type that passes an acceptance test also calls for rewording the provider's status.
 
 **Native tests**: a `tests/<name>.tftest.hcl` with `mock_provider` runs offline on every pull request and must never need a credential; a test file without `mock_provider` calls the live API and runs in the acceptance workflow only. Never mix the two in one file.
 
