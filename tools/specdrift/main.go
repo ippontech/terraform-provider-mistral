@@ -258,10 +258,28 @@ type operation struct {
 // the specification, none of them preferred (see pick).
 const ambiguous = "ambiguous"
 
+// unprintable matches a character that no path of Mistral's specification
+// uses (they hold lower-case letters, digits, "/", "{}", "_", "-" and "#")
+// and that the reports do not print. Every character left is inert in a
+// Markdown code span and on a terminal.
+var unprintable = regexp.MustCompile(`[^A-Za-z0-9/{}._#:-]`)
+
+// printablePath is path with each unprintable character replaced by "?".
+// The paths come from a downloaded document and end up in the spec-drift
+// issue, posted as github-actions[bot]: written as they are, a backtick or a
+// line break would close the code span and let the specification write its
+// own Markdown there (links, mentions, instructions to whoever fixes the
+// issue), and an escape sequence would reach the terminal of whoever runs
+// -update.
+func printablePath(path string) string {
+	return unprintable.ReplaceAllLiteralString(path, "?")
+}
+
 // fingerprints returns, for each route, the hash of its operation in spec,
 // "missing" when the specification has none, or ambiguous when pick cannot
 // tell which of several it calls. ambiguities gives the paths of those
-// operations for each ambiguous route.
+// operations for each ambiguous route, through printablePath, since the
+// reports print them.
 func fingerprints(spec map[string]any, routes []string) (fps map[string]string, ambiguities map[string][]string) {
 	paths, _ := spec["paths"].(map[string]any)
 	byShape := operations(paths)
@@ -278,7 +296,7 @@ func fingerprints(spec map[string]any, routes []string) (fps map[string]string, 
 		if !ok {
 			fps[r] = ambiguous
 			for _, o := range ops {
-				ambiguities[r] = append(ambiguities[r], o.path)
+				ambiguities[r] = append(ambiguities[r], printablePath(o.path))
 			}
 			continue
 		}
@@ -571,8 +589,8 @@ func compare(committed, current map[string]string) string {
 }
 
 // ambiguityReport returns the Markdown section of the routes that match
-// several operations of the specification, with their paths, or "" when there
-// is none. Such a route is reported on every run, whatever the fingerprints
+// several operations of the specification, with their paths as printablePath
+// writes them, or "" when there is none. Such a route is reported on every run, whatever the fingerprints
 // file holds, until pick learns which operation the provider calls.
 func ambiguityReport(ambiguities map[string][]string) string {
 	if len(ambiguities) == 0 {
@@ -580,8 +598,13 @@ func ambiguityReport(ambiguities map[string][]string) string {
 	}
 	var b strings.Builder
 	b.WriteString("### Matches several operations of the specification: teach pick in tools/specdrift/main.go which one the provider calls\n\n")
+	replaced := false
 	for _, r := range slices.Sorted(maps.Keys(ambiguities)) {
 		fmt.Fprintf(&b, "- `%s`: `%s`\n", r, strings.Join(ambiguities[r], "`, `"))
+		replaced = replaced || slices.ContainsFunc(ambiguities[r], func(p string) bool { return strings.Contains(p, "?") })
+	}
+	if replaced {
+		b.WriteString("\nA `?` stands for a character of the specification's path that is not in `[A-Za-z0-9/{}._#:-]`, which this report does not print.\n")
 	}
 	b.WriteString("\n")
 	return b.String()
