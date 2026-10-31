@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -78,10 +77,6 @@ type connectorCredentialIdentity struct {
 // API key, which a configuration shared by a team rarely wants.
 var credentialScopes = []string{client.CredentialsScopeWorkspace, client.CredentialsScopeOrganization}
 
-// noColon is a connector ID: the import ID joins it to the scope and the
-// name with colons.
-var noColon = regexp.MustCompile(`^[^:]+$`)
-
 // Metadata names the type mistral_connector_credential.
 func (r *ConnectorCredentialResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_connector_credential"
@@ -112,9 +107,9 @@ func (r *ConnectorCredentialResource) Schema(_ context.Context, _ resource.Schem
 			},
 			"connector_id": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "The ID of the connector, such as `mistral_connector.this.id`. Changing it replaces the credentials.",
+				MarkdownDescription: "The ID of the connector, a lowercase UUID: `mistral_connector.this.id`, or `data.mistral_connector.this.id` for a connector built in AI Studio. Changing it replaces the credentials.",
 				PlanModifiers:       replace,
-				Validators:          []validator.String{stringvalidator.RegexMatches(noColon, "must not be empty or contain a colon")},
+				Validators:          []validator.String{stringvalidator.RegexMatches(connectorIDPattern, connectorIDRule)},
 			},
 			"scope": schema.StringAttribute{
 				Required: true,
@@ -312,6 +307,9 @@ func (r *ConnectorCredentialResource) ImportState(ctx context.Context, req resou
 	}
 	if !slices.Contains(credentialScopes, scope) {
 		resp.Diagnostics.AddError("Invalid import ID", fmt.Sprintf("The scope must be workspace or organization, got %q.", scope))
+		return
+	}
+	if !importableConnectorID(connectorID, &resp.Diagnostics) {
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("connector_id"), connectorID)...)

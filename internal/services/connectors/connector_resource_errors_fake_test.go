@@ -236,3 +236,23 @@ func TestConnectorResourceReportsAnotherConnectorReadAfterAShare(t *testing.T) {
 		t.Errorf("deletes = %v, want one of %s", deletes, id)
 	}
 }
+
+// Read reads a connector by ID only, so an import by name is refused with a
+// pointer to the data source, rather than reported as a missing object.
+func TestConnectorResourceRefusesAnImportByName(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: connectorConfig(minimalConnector)},
+			{
+				ResourceName:  connectorAddr,
+				ImportState:   true,
+				ImportStateId: "deepwiki",
+				ExpectError:   regexp.MustCompile(`Invalid\s+import\s+ID(.|\n)*lowercase\s+UUID;\s+for\s+a\s+connector\s+known\s+by\s+its\s+name,\s+use\s+data\.mistral_connector\.<name>\.id,\s+got\s+"deepwiki"`),
+			},
+		},
+	})
+}
