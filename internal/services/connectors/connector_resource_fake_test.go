@@ -4,6 +4,7 @@
 package connectors_test
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -346,4 +347,42 @@ func TestConnectorResourceReplacesWhatTheUpdateCannotChange(t *testing.T) {
 		`{"protocol": "mcp", "name": "orders", "title": null, "description": "Orders and returns",
 			"server": "https://orders.example.com/api", "icon_url": null, "system_prompt": "Answer briefly."}`)
 	f.AssertCalled(routeCreate, 3)
+}
+
+// Once the connector is deleted, a connector named with its ID answers the
+// GET of that ID: the refresh takes the connector for gone and plans a
+// create, instead of writing the other connector into the state and updating
+// it.
+func TestConnectorResourceTakesAConnectorNamedWithItsIDForGone(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	var id, squatter string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config: connectorConfig(minimalConnector),
+				Check: func(s *terraform.State) error {
+					id = s.RootModule().Resources[connectorAddr].Primary.ID
+					return nil
+				},
+			},
+			{
+				PreConfig:        func() { squatter = f.squat(id) },
+				Config:           connectorConfig(minimalConnector),
+				ConfigPlanChecks: providertest.ExpectAction(connectorAddr, plancheck.ResourceActionCreate),
+				Check: func(s *terraform.State) error {
+					if got := s.RootModule().Resources[connectorAddr].Primary.ID; got == id || got == squatter {
+						return fmt.Errorf("the state holds the connector %s, want a new one", got)
+					}
+					return nil
+				},
+			},
+		},
+	})
+	f.AssertCalled(routeUpdate, 0)
+	if c, ok := f.connectors.Get(squatter); !ok || c["name"] != id {
+		t.Errorf("the other connector is %v, want it unchanged", c)
+	}
 }

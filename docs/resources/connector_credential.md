@@ -75,7 +75,7 @@ resource "mistral_connector_credential" "orders" {
 
 > **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
-- `connector_id` (String) The ID of the connector, such as `mistral_connector.this.id`. Changing it replaces the credentials.
+- `connector_id` (String) The ID of the connector, a lowercase UUID: `mistral_connector.this.id`, or `data.mistral_connector.this.id` for a connector built in AI Studio. Changing it replaces the credentials.
 - `credentials_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The secret values, as a JSON object written with `jsonencode`: `bearer_token` (a string), `headers` (an object of strings), or `oauth` (OAuth2 client credentials). Write-only: Terraform sends it on create, and on update when `credentials_wo_version` changes.
 - `name` (String) The name of the credentials, unique per connector and scope: up to 64 letters, digits, underscores and dashes. Changing it replaces the credentials.
 - `scope` (String) Who the credentials serve: `workspace` (the members of the workspace of the API key) or `organization`. Changing it replaces the credentials.

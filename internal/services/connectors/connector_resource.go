@@ -9,6 +9,7 @@ package connectors
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -193,15 +194,20 @@ func (r *ConnectorResource) Create(ctx context.Context, req resource.CreateReque
 	r.applyVisibility(ctx, created, plan.Visibility.ValueString(), &resp.State, resp.Identity, &resp.Diagnostics)
 }
 
-// Read gets the connector by ID; a 404 removes it from the state.
+// Read gets the connector by ID; when no connector has that ID, it removes
+// the resource from the state.
 func (r *ConnectorResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var id types.String
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &id)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	got, err := r.client.GetConnector(ctx, id.ValueString())
-	if client.IsNotFound(err) {
+	got, err := getConnectorByID(ctx, r.client, id.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot read the connector", err.Error())
+		return
+	}
+	if got == nil {
 		// Set the identity before removing: during an import,
 		// terraform-plugin-framework v1.19.0 fails a Read that removes the
 		// resource without one, instead of Terraform's "Cannot import
@@ -212,11 +218,24 @@ func (r *ConnectorResource) Read(ctx context.Context, req resource.ReadRequest, 
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	if err != nil {
-		resp.Diagnostics.AddError("Cannot read the connector", err.Error())
-		return
-	}
 	resp.Diagnostics.Append(setConnectorState(ctx, *got, &resp.State, resp.Identity)...)
+}
+
+// getConnectorByID returns the connector whose ID is id, and nil when there
+// is none. GET /v1/connectors/{connector_id_or_name} takes an ID or a name,
+// and a name may look like a UUID (namePattern, the rule of the
+// specification, accepts one): once the connector is deleted, or hidden
+// from the API key, the API may answer the connector that a member of the
+// workspace named with its ID. That one is another connector, with another
+// server, and counts as none, so that the state never adopts it and no
+// credentials reach it. Whether the API resolves an ID-shaped segment by
+// name is our reading of the specification, to check on the first live run.
+func getConnectorByID(ctx context.Context, cl *client.Client, id string) (*client.Connector, error) {
+	got, err := cl.GetConnector(ctx, id)
+	if client.IsNotFound(err) || (err == nil && got.ID != id) {
+		return nil, nil
+	}
+	return got, err
 }
 
 // Update sends every field to the PATCH, then moves the visibility with the
@@ -249,9 +268,44 @@ func (r *ConnectorResource) Delete(ctx context.Context, req resource.DeleteReque
 	}
 }
 
-// ImportState takes the connector ID or the resource identity.
+// ImportState takes the connector ID or the resource identity, and refuses
+// anything else, a name first: Read reads by ID only (getConnectorByID), so
+// an imported name would read as no connector.
 func (r *ConnectorResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	id := req.ID
+	if id == "" {
+		var identity connectorIdentity
+		resp.Diagnostics.Append(req.Identity.Get(ctx, &identity)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		id = identity.ID.ValueString()
+	}
+	if !importableConnectorID(id, &resp.Diagnostics) {
+		return
+	}
 	resource.ImportStatePassthroughWithIdentity(ctx, path.Root("id"), path.Root("id"), req, resp)
+}
+
+// connectorIDPattern is a connector ID as the API writes it: a UUID in lower
+// case (the specification gives the IDs "format: uuid"). getConnectorByID
+// compares the answered id with the one asked for exactly, so a
+// connector_id or an import ID of another shape, a name or an upper-case
+// UUID, is refused before any call rather than read as no connector.
+var connectorIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// connectorIDRule is what a connector_id must be, for the validator and the
+// import errors.
+const connectorIDRule = "must be a connector ID, a lowercase UUID; for a connector known by its name, use data.mistral_connector.<name>.id"
+
+// importableConnectorID reports whether id is a connector ID, and adds an
+// "Invalid import ID" error when it is not.
+func importableConnectorID(id string, diags *diag.Diagnostics) bool {
+	if connectorIDPattern.MatchString(id) {
+		return true
+	}
+	diags.AddError("Invalid import ID", fmt.Sprintf("The connector ID %s, got %q.", connectorIDRule, id))
+	return false
 }
 
 // applyVisibility moves the connector c, as the create or the update
@@ -269,7 +323,10 @@ func (r *ConnectorResource) applyVisibility(ctx context.Context, c *client.Conne
 		return
 	}
 	// The share calls answer a message, not the connector.
-	got, err := r.client.GetConnector(ctx, c.ID)
+	got, err := getConnectorByID(ctx, r.client, c.ID)
+	if err == nil && got == nil {
+		err = fmt.Errorf("no connector has the ID %q any more", c.ID)
+	}
 	if err != nil {
 		diags.Append(setConnectorState(ctx, *c, state, identity)...)
 		diags.AddError("Cannot read the connector", err.Error())

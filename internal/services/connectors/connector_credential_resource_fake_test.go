@@ -4,6 +4,7 @@
 package connectors_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -302,4 +303,120 @@ func TestConnectorCredentialResourceIsRecreatedAfterAnUnshare(t *testing.T) {
 	})
 	f.AssertCalled(routeUnshare, 1)
 	f.AssertCalled(routeCreateCredentials, 2)
+}
+
+// beforeApply is a plan check that runs between the plan and the apply of a
+// step. plugin-testing applies the saved plan, which reads nothing first, as
+// a plan reviewed in CI and applied later would: what the function changes
+// is what the apply meets.
+type beforeApply func()
+
+// CheckPlan runs the function.
+func (do beforeApply) CheckPlan(context.Context, plancheck.CheckPlanRequest, *plancheck.CheckPlanResponse) {
+	do()
+}
+
+// seedOrders stores a connector built outside Terraform and returns its ID.
+func (f *fake) seedOrders() string {
+	return f.seed(map[string]any{
+		"name": "orders", "description": "Reads the orders", "server": "https://orders.example/mcp",
+		"visibility": sharedWorkspace, "owner_type": ownerType(sharedWorkspace),
+	})
+}
+
+// literalCredential is workspace credentials "ci", whose other arguments are
+// body, of the connector connectorID written as a literal, as for a
+// connector built in AI Studio.
+func literalCredential(connectorID, body string) string {
+	return providertest.ProviderConfig() + fmt.Sprintf(`
+resource "mistral_connector_credential" "ci" {
+  connector_id = %q
+  scope        = "workspace"
+  name         = "ci"
+%s
+}
+`, connectorID, body)
+}
+
+// noConnector matches the error of a write to the credentials of
+// connectorID once no connector has that ID.
+func noConnector(action, connectorID string) *regexp.Regexp {
+	return regexp.MustCompile(`Cannot\s+` + action + `\s+the\s+connector\s+credentials(.|\n)*No\s+connector\s+has\s+the\s+ID\s+"` + connectorID + `"`)
+}
+
+// Once the connector of the credentials is deleted, a connector named with
+// its ID answers the GET and the credentials paths. The secret reaches it
+// neither through a rotation planned before it appeared and applied after,
+// nor through the create that the next refresh plans: both fail and name the
+// ID, and no credentials call reaches it.
+func TestConnectorCredentialResourceSendsNothingToAConnectorNamedWithItsConnectorID(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seedOrders()
+	var squatter string
+	var listsBefore int
+	squat := beforeApply(func() {
+		squatter = f.squat(id)
+		listsBefore = len(f.Requests(routeListCredentials))
+	})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: literalCredential(id, bearer(firstToken, 1))},
+			{
+				Config: literalCredential(id, bearer(secondToken, 2)),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction(credentialAddr, plancheck.ResourceActionUpdate), squat,
+				}},
+				ExpectError: noConnector("update", id),
+			},
+			{
+				Config: literalCredential(id, bearer(secondToken, 2)),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction(credentialAddr, plancheck.ResourceActionCreate),
+				}},
+				ExpectError: noConnector("create", id),
+			},
+		},
+	})
+	f.AssertCalled(routeCreateCredentials, 1)
+	f.AssertCalled(routeUpdateCredentials, 0)
+	if lists := len(f.Requests(routeListCredentials)) - listsBefore; lists != 0 {
+		t.Errorf("the credentials were listed %d times once the other connector answered, want 0", lists)
+	}
+	if held := f.credentialsOf(squatter, "workspace"); len(held) != 0 {
+		t.Errorf("the other connector holds the credentials %v", held)
+	}
+}
+
+// A destroy applied once the connector of the credentials is deleted, and
+// another one named with its ID, sends no delete: the credentials of the
+// other connector stay, even under the same name.
+func TestConnectorCredentialResourceDeletesNothingFromAConnectorNamedWithItsConnectorID(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seedOrders()
+	var squatter string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: literalCredential(id, bearer(firstToken, 1))},
+			{
+				Config: providertest.ProviderConfig(),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction(credentialAddr, plancheck.ResourceActionDestroy),
+					beforeApply(func() {
+						squatter = f.squat(id)
+						f.seedCredentials(squatter, "workspace", "ci", true)
+					}),
+				}},
+			},
+		},
+	})
+	f.AssertCalled(routeDeleteCredentials, 0)
+	if held := f.credentialsOf(squatter, "workspace"); len(held) != 1 {
+		t.Errorf("the other connector holds the credentials %v, want its own ci", held)
+	}
 }
