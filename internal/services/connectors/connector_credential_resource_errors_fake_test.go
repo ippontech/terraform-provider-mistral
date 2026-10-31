@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 
 	"github.com/ippontech/terraform-provider-mistral/internal/providertest"
 	"github.com/ippontech/terraform-provider-mistral/internal/sdktest"
@@ -94,13 +95,14 @@ func TestConnectorCredentialResourceReportsErrors(t *testing.T) {
 	})
 }
 
-// cannedCredentials is a server whose create of credentials succeeds and
-// whose list answers what list returns for the n-th call, from 1: the cases
-// the fake cannot produce, of an API that accepts credentials it then does
-// not list.
+// cannedCredentials is a server whose connector standaloneConnectorID
+// exists, whose create of credentials succeeds and whose list answers what
+// list returns for the n-th call, from 1: the cases the fake cannot produce,
+// of an API that accepts credentials it then does not list.
 func cannedCredentials(t *testing.T, list func(n int64) (int, any)) *sdktest.Server {
 	t.Helper()
 	srv := sdktest.NewServer(t)
+	srv.Respond(routeGet, http.StatusOK, map[string]any{"id": standaloneConnectorID, "name": "orders", "visibility": "shared_org"})
 	var calls atomic.Int64
 	srv.Handle(routeListCredentials, func(w http.ResponseWriter, _ *http.Request) {
 		status, body := list(calls.Add(1))
@@ -109,6 +111,9 @@ func cannedCredentials(t *testing.T, list func(n int64) (int, any)) *sdktest.Ser
 	srv.Respond(routeCreateCredentials, http.StatusOK, map[string]any{"message": "Credentials created"})
 	return srv
 }
+
+// standaloneConnectorID is the connector of standaloneCredential.
+const standaloneConnectorID = "00000000-0000-4000-8000-000000000001"
 
 // standaloneCredential is credentials of a connector given by its ID.
 const standaloneCredential = `
@@ -166,7 +171,7 @@ func TestConnectorCredentialResourceValidatesItsArguments(t *testing.T) {
 	credential := func(scope, name, credentials string) string {
 		return providertest.ProviderConfig() + `
 resource "mistral_connector_credential" "ci" {
-  connector_id   = "c-1"
+  connector_id   = "` + standaloneConnectorID + `"
   scope          = "` + scope + `"
   name           = "` + name + `"
   credentials_wo = ` + credentials + `
@@ -183,9 +188,19 @@ resource "mistral_connector_credential" "ci" {
 		"headers not strings": {credential("workspace", "ci", `jsonencode({ headers = { a = 1 } })`), `"headers"\s+must\s+be\s+an\s+object\s+of\s+strings`},
 		"token not a string":  {credential("workspace", "ci", `jsonencode({ bearer_token = ["fake"] })`), `"bearer_token"\s+must\s+be\s+a\s+string`},
 		"oauth not an object": {credential("workspace", "ci", `jsonencode({ oauth = "fake" })`), `"oauth"\s+must\s+be\s+an\s+object`},
-		"connector with a colon": {
-			strings.Replace(credential("workspace", "ci", token), `"c-1"`, `"c:1"`, 1), `must\s+not\s+be\s+empty\s+or\s+contain\s+a\s+colon`,
-		},
+	}
+	// A connector_id that is not a lowercase UUID would read as no
+	// connector (getConnectorByID): a name, another spelling of the UUID, a
+	// colon of the import ID.
+	for name, connectorID := range map[string]string{
+		"connector name":          "orders",
+		"upper-case connector ID": "0198E70F-57B0-77F6-A752-0A7F5EA2DA35",
+		"connector with a colon":  "c:1",
+	} {
+		cases[name] = struct{ config, err string }{
+			strings.Replace(credential("workspace", "ci", token), standaloneConnectorID, connectorID, 1),
+			`must\s+be\s+a\s+connector\s+ID,\s+a\s+lowercase\s+UUID;\s+for\s+a\s+connector\s+known\s+by\s+its\s+name,\s+use\s+data\.mistral_connector`,
+		}
 	}
 	// The parallel subtests run once this function returns: the cleanup
 	// checks the fake after all of them.
@@ -205,7 +220,8 @@ resource "mistral_connector_credential" "ci" {
 	}
 }
 
-// An import ID needs three non-empty parts and a supported scope.
+// An import ID needs three non-empty parts, a supported scope and a
+// connector ID, not a connector name.
 func TestConnectorCredentialResourceRejectsAMalformedImportID(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
@@ -231,6 +247,12 @@ func TestConnectorCredentialResourceRejectsAMalformedImportID(t *testing.T) {
 				ImportState:   true,
 				ImportStateId: "c-1:user:ci",
 				ExpectError:   regexp.MustCompile(`Invalid\s+import\s+ID(.|\n)*workspace\s+or\s+organization,\s+got\s+"user"`),
+			},
+			{
+				ResourceName:  credentialAddr,
+				ImportState:   true,
+				ImportStateId: "deepwiki:workspace:ci",
+				ExpectError:   regexp.MustCompile(`Invalid\s+import\s+ID(.|\n)*lowercase\s+UUID(.|\n)*got\s+"deepwiki"`),
 			},
 		},
 	})
@@ -260,4 +282,47 @@ func TestConnectorImportOfMissingObjects(t *testing.T) {
 			},
 		},
 	})
+}
+
+// A failure of the GET of the connector, which every call of the
+// credentials follows, is reported with the message of the API: before a
+// create, at the refresh, and in an update or a delete applied from a saved
+// plan.
+func TestConnectorCredentialResourceReportsAFailedReadOfItsConnector(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seedOrders()
+	forbidNextGet := beforeApply(func() { f.FailNextWith(routeGet, http.StatusForbidden, "Forbidden", 1) })
+	forbidden := func(action string) *regexp.Regexp {
+		return regexp.MustCompile(`Cannot\s+` + action + `\s+the\s+connector\s+credentials(.|\n)*403`)
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				PreConfig:   func() { f.FailNextWith(routeGet, http.StatusForbidden, "Forbidden", 1) },
+				Config:      literalCredential(id, bearer(firstToken, 1)),
+				ExpectError: forbidden("create"),
+			},
+			{Config: literalCredential(id, bearer(firstToken, 1))},
+			{
+				PreConfig:   func() { f.FailNext(routeGet, http.StatusInternalServerError, 4) },
+				Config:      literalCredential(id, bearer(firstToken, 1)),
+				ExpectError: regexp.MustCompile(`Cannot\s+read\s+the\s+connector\s+credentials(.|\n)*500`),
+			},
+			{
+				Config:           literalCredential(id, bearer(secondToken, 2)),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{forbidNextGet}},
+				ExpectError:      forbidden("update"),
+			},
+			{
+				Config:           providertest.ProviderConfig(),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{forbidNextGet}},
+				ExpectError:      forbidden("delete"),
+			},
+		},
+	})
+	f.AssertCalled(routeCreateCredentials, 1)
+	f.AssertCalled(routeUpdateCredentials, 0)
 }
