@@ -190,18 +190,20 @@ func TestMalformedFingerprintsFile(t *testing.T) {
 }
 
 // TestSpecificationErrorsArePrintedQuoted checks that an error quoting the
-// specification reaches stderr quoted, on one line: a parse error carries
-// the decoded scalar as it is, escape sequence and line break included.
+// specification reaches stderr quoted, on one line, with no "##[": a parse
+// error carries the decoded scalar as it is, escape sequence, line break and
+// workflow commands included.
 func TestSpecificationErrorsArePrintedQuoted(t *testing.T) {
 	t.Parallel()
 	root, spec := repo(t)
-	if err := os.WriteFile(spec, []byte("openapi: 3.1.0\npaths:\n  /v1/agents/{agent_id}: !!int \"\\e[2J\\n::error::x\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(spec, []byte("openapi: 3.1.0\npaths:\n  /v1/agents/{agent_id}: !!int \"\\e[2J\\n::error::x ##[error]y\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
 	code := run([]string{"-spec", spec, "-root", root}, &out, &errOut)
 	got := errOut.String()
-	if code != 2 || strings.ContainsAny(strings.TrimSuffix(got, "\n"), "\x1b\n") || !strings.Contains(got, `\x1b[2J\n::error::x`) {
+	if code != 2 || strings.ContainsAny(strings.TrimSuffix(got, "\n"), "\x1b\n") || strings.Contains(got, "##[") ||
+		!strings.Contains(got, `\x1b[2J\n::error::x \x23\x23[error]y`) {
 		t.Errorf("run: %d %q", code, got)
 	}
 }

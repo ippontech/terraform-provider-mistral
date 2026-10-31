@@ -82,11 +82,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	spec, err := loadSpec(*specPath)
 	if err != nil {
-		// A parse error quotes the downloaded document as it is ("cannot
-		// decode !!str `...`"): quoted again, its control characters reach
-		// neither the terminal nor the job log, where a line that starts
-		// with "::" is a workflow command.
-		_, _ = fmt.Fprintln(stderr, "specdrift:", strconv.QuoteToGraphic(err.Error()))
+		_, _ = fmt.Fprintln(stderr, "specdrift:", quotedError(err))
 		return 2
 	}
 	current, ambiguities := fingerprints(spec, routes)
@@ -106,6 +102,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprint(stdout, report)
 	return 1
+}
+
+// quotedError is err as a Go string literal, on one line. A parse error of
+// the specification quotes the downloaded document as it is ("cannot decode
+// !!str `...`"), and stderr reaches the terminal of whoever runs specdrift
+// and, in CI, the job log, where the runner reads workflow commands:
+// strconv.QuoteToGraphic escapes the control characters and line breaks, so
+// that no "::command::" starts a line, and "#" becomes \x23, so that no
+// "##[command]" of the runner's legacy syntax, which it reads anywhere in a
+// line, remains.
+func quotedError(err error) string {
+	return strings.ReplaceAll(strconv.QuoteToGraphic(err.Error()), "#", `\x23`)
 }
 
 // rewrite writes the fingerprints file. A route that matches several
