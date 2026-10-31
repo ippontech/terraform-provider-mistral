@@ -171,7 +171,7 @@ func TestConnectorCredentialResourceValidatesItsArguments(t *testing.T) {
 	credential := func(scope, name, credentials string) string {
 		return providertest.ProviderConfig() + `
 resource "mistral_connector_credential" "ci" {
-  connector_id   = "c-1"
+  connector_id   = "` + standaloneConnectorID + `"
   scope          = "` + scope + `"
   name           = "` + name + `"
   credentials_wo = ` + credentials + `
@@ -188,9 +188,19 @@ resource "mistral_connector_credential" "ci" {
 		"headers not strings": {credential("workspace", "ci", `jsonencode({ headers = { a = 1 } })`), `"headers"\s+must\s+be\s+an\s+object\s+of\s+strings`},
 		"token not a string":  {credential("workspace", "ci", `jsonencode({ bearer_token = ["fake"] })`), `"bearer_token"\s+must\s+be\s+a\s+string`},
 		"oauth not an object": {credential("workspace", "ci", `jsonencode({ oauth = "fake" })`), `"oauth"\s+must\s+be\s+an\s+object`},
-		"connector with a colon": {
-			strings.Replace(credential("workspace", "ci", token), `"c-1"`, `"c:1"`, 1), `must\s+not\s+be\s+empty\s+or\s+contain\s+a\s+colon`,
-		},
+	}
+	// A connector_id that is not a lowercase UUID would read as no
+	// connector (getConnectorByID): a name, another spelling of the UUID, a
+	// colon of the import ID.
+	for name, connectorID := range map[string]string{
+		"connector name":          "orders",
+		"upper-case connector ID": "0198E70F-57B0-77F6-A752-0A7F5EA2DA35",
+		"connector with a colon":  "c:1",
+	} {
+		cases[name] = struct{ config, err string }{
+			strings.Replace(credential("workspace", "ci", token), standaloneConnectorID, connectorID, 1),
+			`must\s+be\s+a\s+connector\s+ID,\s+a\s+lowercase\s+UUID;\s+for\s+a\s+connector\s+known\s+by\s+its\s+name,\s+use\s+data\.mistral_connector`,
+		}
 	}
 	// The parallel subtests run once this function returns: the cleanup
 	// checks the fake after all of them.
@@ -210,7 +220,8 @@ resource "mistral_connector_credential" "ci" {
 	}
 }
 
-// An import ID needs three non-empty parts and a supported scope.
+// An import ID needs three non-empty parts, a supported scope and a
+// connector ID, not a connector name.
 func TestConnectorCredentialResourceRejectsAMalformedImportID(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
@@ -236,6 +247,12 @@ func TestConnectorCredentialResourceRejectsAMalformedImportID(t *testing.T) {
 				ImportState:   true,
 				ImportStateId: "c-1:user:ci",
 				ExpectError:   regexp.MustCompile(`Invalid\s+import\s+ID(.|\n)*workspace\s+or\s+organization,\s+got\s+"user"`),
+			},
+			{
+				ResourceName:  credentialAddr,
+				ImportState:   true,
+				ImportStateId: "deepwiki:workspace:ci",
+				ExpectError:   regexp.MustCompile(`Invalid\s+import\s+ID(.|\n)*lowercase\s+UUID(.|\n)*got\s+"deepwiki"`),
 			},
 		},
 	})

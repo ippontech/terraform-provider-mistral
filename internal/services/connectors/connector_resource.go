@@ -268,9 +268,44 @@ func (r *ConnectorResource) Delete(ctx context.Context, req resource.DeleteReque
 	}
 }
 
-// ImportState takes the connector ID or the resource identity.
+// ImportState takes the connector ID or the resource identity, and refuses
+// anything else, a name first: Read reads by ID only (getConnectorByID), so
+// an imported name would read as no connector.
 func (r *ConnectorResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	id := req.ID
+	if id == "" {
+		var identity connectorIdentity
+		resp.Diagnostics.Append(req.Identity.Get(ctx, &identity)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		id = identity.ID.ValueString()
+	}
+	if !importableConnectorID(id, &resp.Diagnostics) {
+		return
+	}
 	resource.ImportStatePassthroughWithIdentity(ctx, path.Root("id"), path.Root("id"), req, resp)
+}
+
+// connectorIDPattern is a connector ID as the API writes it: a UUID in lower
+// case (the specification gives the IDs "format: uuid"). getConnectorByID
+// compares the answered id with the one asked for exactly, so a
+// connector_id or an import ID of another shape, a name or an upper-case
+// UUID, is refused before any call rather than read as no connector.
+var connectorIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// connectorIDRule is what a connector_id must be, for the validator and the
+// import errors.
+const connectorIDRule = "must be a connector ID, a lowercase UUID; for a connector known by its name, use data.mistral_connector.<name>.id"
+
+// importableConnectorID reports whether id is a connector ID, and adds an
+// "Invalid import ID" error when it is not.
+func importableConnectorID(id string, diags *diag.Diagnostics) bool {
+	if connectorIDPattern.MatchString(id) {
+		return true
+	}
+	diags.AddError("Invalid import ID", fmt.Sprintf("The connector ID %s, got %q.", connectorIDRule, id))
+	return false
 }
 
 // applyVisibility moves the connector c, as the create or the update
