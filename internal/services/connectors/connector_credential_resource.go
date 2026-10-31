@@ -167,9 +167,9 @@ func (r *ConnectorCredentialResource) Configure(_ context.Context, req resource.
 	r.client = providerdata.Configure(req.ProviderData, providerdata.Workspace, &resp.Diagnostics)
 }
 
-// Create checks that the credentials do not exist, then creates them with
-// the POST. The write-only secret comes from the configuration: the plan
-// holds it as null.
+// Create checks that the connector exists and that the credentials do not,
+// then creates them with the POST. The write-only secret comes from the
+// configuration: the plan holds it as null.
 func (r *ConnectorCredentialResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan, config connectorCredentialModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -178,6 +178,9 @@ func (r *ConnectorCredentialResource) Create(ctx context.Context, req resource.C
 		return
 	}
 	connectorID, scope, name := plan.ConnectorID.ValueString(), plan.Scope.ValueString(), plan.Name.ValueString()
+	if !r.connectorExists(ctx, connectorID, "Cannot create the connector credentials", &resp.Diagnostics) {
+		return
+	}
 
 	// Without this check, a create would collide with credentials that exist
 	// outside Terraform, or take them over if the API answered the POST as
@@ -202,21 +205,26 @@ func (r *ConnectorCredentialResource) Create(ctx context.Context, req resource.C
 	r.readBack(ctx, plan, &resp.State, resp.Identity, &resp.Diagnostics)
 }
 
-// Read lists the credentials of the scope and finds these by name. A
-// connector deleted outside Terraform answers 404, which removes the
-// credentials too.
+// Read lists the credentials of the scope and finds these by name. When no
+// connector has the ID (getConnectorByID), or the list answers 404 because
+// the connector was deleted since, the credentials went with it: Read
+// removes them.
 func (r *ConnectorCredentialResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state connectorCredentialModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	found, err := r.find(ctx, state.ConnectorID.ValueString(), state.Scope.ValueString(), state.Name.ValueString())
+	connectorID := state.ConnectorID.ValueString()
+	var found *client.ConnectorCredentials
+	connector, err := getConnectorByID(ctx, r.client, connectorID)
+	if err == nil && connector != nil {
+		found, err = r.find(ctx, connectorID, state.Scope.ValueString(), state.Name.ValueString())
+	}
 	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Cannot read the connector credentials", err.Error())
 		return
 	}
-	// A 404 means the connector is gone, and its credentials with it.
 	if found == nil {
 		// Set the identity before removing: during an import,
 		// terraform-plugin-framework v1.19.0 fails a Read that removes the
@@ -245,6 +253,9 @@ func (r *ConnectorCredentialResource) Update(ctx context.Context, req resource.U
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !r.connectorExists(ctx, plan.ConnectorID.ValueString(), "Cannot update the connector credentials", &resp.Diagnostics) {
+		return
+	}
 	body := plan.request(config)
 	if !plan.CredentialsWOVersion.Equal(state.CredentialsWOVersion) {
 		body.Credentials = json.RawMessage(config.CredentialsWO.ValueString())
@@ -257,14 +268,20 @@ func (r *ConnectorCredentialResource) Update(ctx context.Context, req resource.U
 }
 
 // Delete deletes the credentials; a 404 means they, or their connector, are
-// already gone.
+// already gone. When no connector has the ID, the credentials went with
+// their connector, and the delete sends nothing: a connector named with that
+// ID (getConnectorByID) holds other credentials, which may bear this name.
 func (r *ConnectorCredentialResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state connectorCredentialModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	err := r.client.DeleteConnectorCredentials(ctx, state.ConnectorID.ValueString(), state.Scope.ValueString(), state.Name.ValueString())
+	connectorID := state.ConnectorID.ValueString()
+	connector, err := getConnectorByID(ctx, r.client, connectorID)
+	if err == nil && connector != nil {
+		err = r.client.DeleteConnectorCredentials(ctx, connectorID, state.Scope.ValueString(), state.Name.ValueString())
+	}
 	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Cannot delete the connector credentials", err.Error())
 	}
@@ -300,6 +317,29 @@ func (r *ConnectorCredentialResource) ImportState(ctx context.Context, req resou
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("connector_id"), connectorID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("scope"), scope)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), name)...)
+}
+
+// connectorExists reports whether a connector has the ID connectorID, and
+// adds an error diagnostic titled summary when none has or the read fails.
+// Create and Update call it before they send credentials_wo: the
+// credentials paths take an ID or a name, so without it the secret meant for
+// a deleted connector would reach a connector named with its ID
+// (getConnectorByID), and Mistral would send it to that connector's server.
+// The refresh of a plan sees such a connector, but a saved plan is applied
+// without one, so the writes check again; the check and the write stay two
+// calls.
+func (r *ConnectorCredentialResource) connectorExists(ctx context.Context, connectorID, summary string, diags *diag.Diagnostics) bool {
+	connector, err := getConnectorByID(ctx, r.client, connectorID)
+	if err != nil {
+		diags.AddError(summary, err.Error())
+		return false
+	}
+	if connector == nil {
+		diags.AddError(summary, fmt.Sprintf("No connector has the ID %q: it was deleted, or the API key can no longer see it. "+
+			"The credentials were not sent.", connectorID))
+		return false
+	}
+	return true
 }
 
 // find returns the credentials name of the connector for the scope, nil

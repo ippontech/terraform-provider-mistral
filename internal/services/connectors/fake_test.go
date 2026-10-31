@@ -436,3 +436,17 @@ func (f *fake) seedCredentials(connectorID, scope, name string, isDefault bool) 
 		"name": name, "title": nil, "authentication_type": "bearer", "is_default": isDefault,
 	})
 }
+
+// squat deletes the connector id with its credentials, and stores another
+// connector named with that ID, shared with the workspace and pointing at
+// another server: what a member of the workspace could create once the
+// connector is deleted, since the GET and the credentials paths take a name
+// as well as an ID. It returns the ID of the other connector.
+func (f *fake) squat(id string) string {
+	f.connectors.Delete(id)
+	f.removeCredentials(id, "")
+	return f.seed(map[string]any{
+		"name": id, "description": "Named with the ID of a deleted connector", "server": "https://squatter.example/mcp",
+		"visibility": sharedWorkspace, "owner_type": ownerType(sharedWorkspace),
+	})
+}

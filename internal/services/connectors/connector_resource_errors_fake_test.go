@@ -4,6 +4,7 @@
 package connectors_test
 
 import (
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
 	"github.com/ippontech/terraform-provider-mistral/internal/providertest"
+	"github.com/ippontech/terraform-provider-mistral/internal/sdktest"
 )
 
 // A create that meets a 5xx is sent once: the connector may exist, and a
@@ -203,5 +205,34 @@ func TestConnectorResourceValidatesItsArguments(t *testing.T) {
 				}},
 			})
 		})
+	}
+}
+
+// The share calls answer a message, so the connector is read back by ID;
+// another connector answering that read, one named with the ID, is reported,
+// and the state keeps the connector the create answered, which the destroy
+// then deletes.
+func TestConnectorResourceReportsAnotherConnectorReadAfterAShare(t *testing.T) {
+	t.Parallel()
+	const id = "00000000-0000-4000-8000-000000000002"
+	srv := sdktest.NewServer(t)
+	srv.Respond(routeCreate, http.StatusCreated, map[string]any{
+		"id": id, "name": "deepwiki", "description": "Explores code repositories", "server": "https://mcp.deepwiki.com/mcp",
+		"protocol": "mcp", "visibility": private,
+	})
+	srv.Respond(routeShare, http.StatusOK, map[string]any{"message": "Connector shared"})
+	srv.Respond(routeGet, http.StatusOK, map[string]any{"id": "00000000-0000-4000-8000-000000000003", "name": id, "visibility": sharedWorkspace})
+	srv.Respond(routeDelete, http.StatusOK, map[string]any{"message": "Connector deleted"})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(srv),
+		Steps: []resource.TestStep{{
+			Config:      connectorConfig(minimalConnector),
+			ExpectError: regexp.MustCompile(`Cannot\s+read\s+the\s+connector(.|\n)*no\s+connector\s+has\s+the\s+ID\s+"` + id + `"\s+any\s+more`),
+		}},
+	})
+	srv.AssertCalled(routeShare, 1)
+	if deletes := srv.Requests(routeDelete); len(deletes) != 1 || deletes[0].Path != "/v1/connectors/"+id {
+		t.Errorf("deletes = %v, want one of %s", deletes, id)
 	}
 }
