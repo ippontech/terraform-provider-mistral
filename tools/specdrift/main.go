@@ -44,6 +44,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -81,7 +82,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	spec, err := loadSpec(*specPath)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "specdrift:", err)
+		// A parse error quotes the downloaded document as it is ("cannot
+		// decode !!str `...`"): quoted again, its control characters reach
+		// neither the terminal nor the job log, where a line that starts
+		// with "::" is a workflow command.
+		_, _ = fmt.Fprintln(stderr, "specdrift:", strconv.QuoteToGraphic(err.Error()))
 		return 2
 	}
 	current, ambiguities := fingerprints(spec, routes)
