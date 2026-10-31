@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -228,14 +229,15 @@ func TestAmbiguousRouteIsReported(t *testing.T) {
 	}
 
 	// A route fingerprinted before the specification made it ambiguous is
-	// reported once, as ambiguous, not also as changed.
+	// reported once, as ambiguous, not also as changed. Its paths need no
+	// "?", so the report says nothing about one.
 	written["DELETE /v1/connectors/{id}"] = "0123456789abcdef"
 	if err := os.WriteFile(filepath.Join(root, fingerprintsFile), []byte(format(written)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	const ambiguity = "- `DELETE /v1/connectors/{id}`: `/v1/connectors/{connector_id}#id`, `/v1/connectors/{connector_name}#name`"
 	code, out = runCmd("-spec", specPath, "-root", root)
-	if code != 1 || !strings.Contains(out, ambiguity) || strings.Contains(out, "### Changed") {
+	if code != 1 || !strings.Contains(out, ambiguity) || strings.Contains(out, "### Changed") || strings.Contains(out, "?") {
 		t.Errorf("check, the ambiguity alone: %d %s", code, out)
 	}
 
@@ -243,6 +245,53 @@ func TestAmbiguousRouteIsReported(t *testing.T) {
 	code, out = runCmd("-spec", specPath, "-root", root)
 	if code != 1 || !strings.Contains(out, ambiguity) || !strings.Contains(out, "### Changed in the specification: check the client and the fake against the new contract\n\n- `GET /v1/agents/{agent_id}`\n\n") {
 		t.Errorf("check, a drift beside the ambiguity: %d %s", code, out)
+	}
+}
+
+// specInjection makes DELETE /v1/connectors/{id} ambiguous with two paths
+// that carry Markdown and an escape sequence: a backtick that would close the
+// code span, a line break, a heading, a mention, HTML, and an ANSI sequence
+// in a parameter's braces. YAML's double quotes read "\n" and "\x1b".
+const specInjection = "\nopenapi: 3.1.0\npaths:\n" +
+	"  /v1/agents/{agent_id}:\n" +
+	"    get: {responses: {\"200\": {description: OK}}}\n" +
+	"  \"/v1/connectors/{connector_id}#`\\n# Hi @octocat <b>x</b>\":\n" +
+	"    delete: {responses: {\"204\": {description: Deleted}}}\n" +
+	"  \"/v1/connectors/{a`\\x1b[2J}#name\":\n" +
+	"    delete: {responses: {\"204\": {description: Deleted}}}\n"
+
+// TestSpecificationPathsArePrintedInert checks that the paths of an
+// ambiguous route reach the report and the -update message with every
+// character outside [A-Za-z0-9/{}._#:-] replaced by "?", and that the report
+// then says what a "?" stands for.
+func TestSpecificationPathsArePrintedInert(t *testing.T) {
+	t.Parallel()
+	root, specPath := repo(t)
+	if err := os.WriteFile(specPath, []byte(specInjection), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		named   = "/v1/connectors/{a???2J}#name"
+		heading = "/v1/connectors/{connector_id}#??#?Hi??octocat??b?x?/b?"
+	)
+	var out, errOut bytes.Buffer
+	if code := run([]string{"-spec", specPath, "-root", root, "-update"}, &out, &errOut); code != 2 {
+		t.Fatalf("update: %d %s%s", code, &out, &errOut)
+	}
+	if want := "specdrift: DELETE /v1/connectors/{id} matches several operations of the specification (" + named + ", " + heading + "): its fingerprint stays ambiguous\n"; errOut.String() != want {
+		t.Errorf("update wrote on stderr:\n%q\nwant:\n%q", errOut.String(), want)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := run([]string{"-spec", specPath, "-root", root}, &out, &errOut); code != 1 {
+		t.Fatalf("check: %d %s%s", code, &out, &errOut)
+	}
+	want := "### Matches several operations of the specification: teach pick in tools/specdrift/main.go which one the provider calls\n\n" +
+		"- `DELETE /v1/connectors/{id}`: `" + named + "`, `" + heading + "`\n\n" +
+		"A `?` stands for a character of the specification's path that is not in `[A-Za-z0-9/{}._#:-]`, which this report does not print.\n\n"
+	if out.String() != want {
+		t.Errorf("check reported:\n%q\nwant:\n%q", out.String(), want)
 	}
 }
 
