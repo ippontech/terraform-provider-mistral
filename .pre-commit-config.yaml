@@ -12,10 +12,13 @@ repos:
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: check-yaml
+      # docs/ is generated, and a testdata/ directory holds fixtures whose
+      # bytes the tests compare: tools/coversummary/testdata/change.diff ends
+      # a file name line with the tab git writes after a name holding a space.
       - id: end-of-file-fixer
-        exclude: ^docs/
+        exclude: ^docs/|/testdata/
       - id: trailing-whitespace
-        exclude: ^docs/
+        exclude: ^docs/|/testdata/
   # The same check as the Conventional Commits workflow: one script, so the
   # hook and CI cannot disagree.
   - repo: local
