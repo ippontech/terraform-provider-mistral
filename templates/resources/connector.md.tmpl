@@ -27,8 +27,10 @@ The create sends the visibility. A change goes through the share calls of the AP
 
 When an update changes the visibility and other arguments together, the provider orders the calls so that nobody sees values the configuration does not give them:
 
-- When the visibility narrows (from `shared_org` to `shared_workspace` or `private`, or from `shared_workspace` to `private`), the provider changes it first, and updates the other arguments only once that succeeded. If the share calls fail, nothing else changes. If the update then fails, the visibility is already the new one, and the next plan shows the other arguments alone. An API key with the default access scope does not see a connector that became private, so its update can then fail with a 404.
+- When the visibility narrows (from `shared_org` to `shared_workspace` or `private`, or from `shared_workspace` to `private`), the provider changes it first, and updates the other arguments only once that succeeded. If the share calls fail, the other arguments do not change. A move from `shared_org` to `shared_workspace` whose share fails after the unshare leaves the connector `private`, without the credentials of the organization scope: the next apply updates the other arguments, then shares it with the workspace. If the update fails after the share calls, the visibility is already the new one, and the next plan shows the other arguments alone. An API key with the default access scope does not see a connector that became private, so its update can then fail with a 404.
 - Otherwise, the provider updates the other arguments first, then changes the visibility. If the share calls fail, the error says which visibility the connector kept with its new arguments.
+
+After a failed share call, the provider reads the connector back and records the visibility it has: a call whose answer was lost may have taken effect before its retry failed. When that read fails too, the error gives the visibility as a guess, which the next refresh corrects.
 
 A connector that Mistral publishes to everyone reads `shared_global`. No share call changes that visibility, so the provider refuses to update such a connector rather than send it new arguments.
 

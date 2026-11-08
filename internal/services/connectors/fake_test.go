@@ -5,6 +5,7 @@ package connectors_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -50,6 +51,11 @@ type fake struct {
 	// createAnswersPrivate makes a create ignore the visibility of its body,
 	// for the test of the share calls that then follow a create.
 	createAnswersPrivate bool
+	// lostAnswers counts, per share route, the next calls that take effect
+	// but answer 503, as when the answer of a call that went through is
+	// lost: the client retries the share calls like reads, so it sends the
+	// call again (loseNextAnswer).
+	lostAnswers map[string]int
 }
 
 // newFake starts a fake with no connector.
@@ -60,15 +66,16 @@ func newFake(t *testing.T) *fake {
 		connectors:  sdktest.NewCollection("id"),
 		credentials: sdktest.NewCollection("key"),
 		clock:       time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC),
+		lostAnswers: map[string]int{},
 	}
 	f.Handle(routeCreate, f.create)
 	f.Handle(routeGet, f.get)
 	f.Handle(routeUpdate, f.update)
 	f.Handle(routeDelete, f.delete)
-	f.Handle(routeShare, f.share(sharedWorkspace))
-	f.Handle(routeUnshare, f.unshare(sharedWorkspace))
-	f.Handle(routeShareOrg, f.share(sharedOrg))
-	f.Handle(routeUnshareOrg, f.unshare(sharedOrg))
+	f.Handle(routeShare, f.losable(routeShare, f.share(sharedWorkspace)))
+	f.Handle(routeUnshare, f.losable(routeUnshare, f.unshare(sharedWorkspace)))
+	f.Handle(routeShareOrg, f.losable(routeShareOrg, f.share(sharedOrg)))
+	f.Handle(routeUnshareOrg, f.losable(routeUnshareOrg, f.unshare(sharedOrg)))
 	f.Handle(routeListCredentials, f.listCredentials)
 	f.Handle(routeCreateCredentials, f.createCredentials)
 	f.Handle(routeUpdateCredentials, f.updateCredentials)
@@ -246,6 +253,33 @@ func (f *fake) unshare(visibility string) http.HandlerFunc {
 		scope := map[string]string{sharedWorkspace: "workspace", sharedOrg: "organization"}[visibility]
 		f.removeCredentials(id, scope)
 		sdktest.WriteJSON(w, http.StatusOK, message("Connector unshared"))
+	}
+}
+
+// loseNextAnswer makes the next call to the share route take effect, then
+// answer 503 instead of its own answer.
+func (f *fake) loseNextAnswer(route string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lostAnswers[route]++
+}
+
+// losable serves route with h, unless its next answer is to be lost: h then
+// answers into a discarded recorder, and the client gets a 503.
+func (f *fake) losable(route string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		lost := f.lostAnswers[route] > 0
+		if lost {
+			f.lostAnswers[route]--
+		}
+		f.mu.Unlock()
+		if !lost {
+			h(w, r)
+			return
+		}
+		h(httptest.NewRecorder(), r)
+		sdktest.WriteError(w, http.StatusServiceUnavailable, "The answer was lost")
 	}
 }
 

@@ -349,6 +349,115 @@ import {
 	f.assertWrites(t, routeDelete)
 }
 
+// When the read back after a successful widening fails, the state records
+// the visibility the share calls reached, with the content the PATCH
+// answered: the next plan, without a refresh, has nothing left to do.
+func TestConnectorResourceRecordsTheVisibilityAFailedReadBackFollows(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, private)},
+			{
+				PreConfig:   func() { f.FailNext(routeGet, 500, 4) },
+				Config:      movedConnector(newServer, sharedWorkspace),
+				ExpectError: regexp.MustCompile(`Cannot\s+read\s+the\s+connector(.|\n)*500`),
+			},
+			{Config: movedConnector(newServer, sharedWorkspace), PlanOnly: true},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUpdate, routeShare, routeDelete)
+}
+
+// The client retries an unshare like a read. When the first one takes
+// effect but its answer is lost, the replay fails on a connector already
+// private: the connector is read back, and the state and the error give
+// private, not the visibility the failed answers point to.
+func TestConnectorResourceReadsBackAnUnshareWhoseAnswerWasLost(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, sharedOrg), Check: keepID(&id)},
+			{
+				PreConfig: func() { f.loseNextAnswer(routeUnshareOrg) },
+				Config:    movedConnector(newServer, private),
+				ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*No\s+other\s+argument\s+was\s+sent:\s+the\s+connector\s+keeps\s+its\s+content,\s+with\s+the\s+visibility\s+private\.` +
+					`(.|\n)*The\s+connector\s+is\s+not\s+shared\s+this\s+way`),
+			},
+			{
+				PreConfig:         func() { f.expectConnector(t, id, oldServer, private) },
+				Config:            movedConnector(newServer, private),
+				ConfigPlanChecks:  expectUpdateFrom(private, oldServer),
+				ConfigStateChecks: expectMoved(private),
+			},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUnshareOrg, routeUnshareOrg, routeUpdate, routeDelete)
+}
+
+// The same for a share after the PATCH of a widening: its replay fails on a
+// connector already shared, and the read back gives the visibility it has,
+// so the error says the new content is live with the workspace, and the
+// next plan, without a refresh, has nothing left to do.
+func TestConnectorResourceReadsBackAShareWhoseAnswerWasLost(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, private)},
+			{
+				PreConfig: func() { f.loseNextAnswer(routeShare) },
+				Config:    movedConnector(newServer, sharedWorkspace),
+				ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*The\s+other\s+arguments\s+are\s+already\s+updated,\s+with\s+the\s+visibility\s+shared_workspace:` +
+					`(.|\n)*Only\s+a\s+private\s+connector\s+can\s+be\s+shared`),
+			},
+			{Config: movedConnector(newServer, sharedWorkspace), PlanOnly: true},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUpdate, routeShare, routeShare, routeDelete)
+}
+
+// When the read back after a failed move fails too, the state keeps the
+// visibility the answers point to, and the error words it as a guess.
+func TestConnectorResourceHedgesAVisibilityItCannotReadBack(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, sharedWorkspace)},
+			{
+				PreConfig: func() {
+					f.FailNextWith(routeUnshare, 403, "Only the connector's creator can call this endpoint", 1)
+					f.FailNext(routeGet, 500, 4)
+				},
+				Config: movedConnector(newServer, private),
+				ExpectError: regexp.MustCompile(`No\s+other\s+argument\s+was\s+sent:\s+the\s+connector\s+keeps\s+its\s+content,\s+probably\s+with\s+the\s+visibility\s+shared_workspace\s+` +
+					`\(the\s+read\s+that\s+would\s+confirm\s+it\s+failed\s+too;\s+the\s+next\s+refresh\s+reads\s+the\s+actual\s+one\)(.|\n)*creator`),
+			},
+			{
+				Config:            movedConnector(newServer, private),
+				ConfigPlanChecks:  expectUpdateFrom(sharedWorkspace, oldServer),
+				ConfigStateChecks: expectMoved(private),
+			},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUnshare, routeUnshare, routeUpdate, routeDelete)
+}
+
 // A failing refresh and a failing delete are reported with the message of
 // the API.
 func TestConnectorResourceReportsReadAndDeleteErrors(t *testing.T) {

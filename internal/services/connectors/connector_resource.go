@@ -295,17 +295,55 @@ func narrows(from, to string) bool {
 // narrowVisibility moves the connector id from the visibility from to the
 // narrower want, before Update sends anything else, and reports whether it
 // got there. The framework fills resp.State with the prior state: this sets
-// its visibility to the one the share calls left, and keeps the rest, so
-// that after a failure the next plan shows only what remains to do.
+// its visibility to the one the share calls left (visibilityAfterFailure
+// when they failed), and keeps the rest, so that after a failure the next
+// plan shows only what remains to do.
 func (r *ConnectorResource) narrowVisibility(ctx context.Context, id, from, want string, resp *resource.UpdateResponse) bool {
 	reached, err := r.moveVisibility(ctx, id, from, want)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("visibility"), reached)...)
-	if err != nil {
-		resp.Diagnostics.AddError("Cannot change the visibility of the connector",
-			fmt.Sprintf("No other argument was sent: the connector keeps its content, with the visibility %s. %s", reached, err))
-		return false
+	if err == nil {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("visibility"), reached)...)
+		return true
 	}
-	return true
+	left, confirmed := r.visibilityAfterFailure(ctx, id, reached)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("visibility"), left)...)
+	resp.Diagnostics.AddError("Cannot change the visibility of the connector",
+		fmt.Sprintf("No other argument was sent: the connector keeps its content, %s. %s", leftWith(left, confirmed), err))
+	return false
+}
+
+// visibilityAfterFailure is the visibility of the connector id after a
+// failed move, and whether a read confirmed it. The client retries the
+// share calls like reads, so a call that took effect but lost its answer is
+// sent again, and that replay can fail on a connector already moved: guess,
+// the visibility the answers point to (moveVisibility), may be wrong. When
+// the read fails too, or answers no connector (a key that does not see
+// private connectors), guess stands, unconfirmed.
+func (r *ConnectorResource) visibilityAfterFailure(ctx context.Context, id, guess string) (string, bool) {
+	got, err := r.readBack(ctx, id)
+	if err != nil {
+		return guess, false
+	}
+	return got.Visibility, true
+}
+
+// leftWith says which visibility a failed move left the connector with: as
+// read back, or as the answers point to, worded as a guess, when that read
+// failed too.
+func leftWith(visibility string, confirmed bool) string {
+	if confirmed {
+		return "with the visibility " + visibility
+	}
+	return "probably with the visibility " + visibility + " (the read that would confirm it failed too; the next refresh reads the actual one)"
+}
+
+// readBack reads the connector id after share calls, which answer a
+// message, not the connector. No connector with that ID is an error.
+func (r *ConnectorResource) readBack(ctx context.Context, id string) (*client.Connector, error) {
+	got, err := getConnectorByID(ctx, r.client, id)
+	if err == nil && got == nil {
+		err = fmt.Errorf("no connector has the ID %q any more", id)
+	}
+	return got, err
 }
 
 // updateFailure is the detail of a failed PATCH. After a narrowing, the
@@ -379,11 +417,13 @@ func importableConnectorID(id string, diags *diag.Diagnostics) bool {
 }
 
 // applyVisibility moves the connector c, as the create or the PATCH answered
-// it, to the visibility want, and writes the state. After a narrowing, the
-// PATCH answers the planned visibility, and nothing moves. When a share call
-// fails, the state keeps c with the visibility the calls left, so that a
-// created connector stays in the state and the next plan shows the move
-// alone; the error starts with done, what the create or the PATCH already
+// it, to the visibility want, reads it back, and writes the state. After a
+// narrowing, the PATCH answers the planned visibility, and nothing moves.
+// When a share call or the read back fails, the state keeps c with the
+// visibility the calls left (visibilityAfterFailure when they failed), so
+// that a created connector stays in the state and the next plan, which
+// narrows reads, starts from the visibility the connector has. The error of
+// a failed share call starts with done, what the create or the PATCH already
 // applied, so that the user knows that content is live with that visibility.
 func (r *ConnectorResource) applyVisibility(ctx context.Context, c *client.Connector, want, done string, state *tfsdk.State, identity *tfsdk.ResourceIdentity, diags *diag.Diagnostics) {
 	if c.Visibility == want {
@@ -391,20 +431,18 @@ func (r *ConnectorResource) applyVisibility(ctx context.Context, c *client.Conne
 		return
 	}
 	reached, err := r.moveVisibility(ctx, c.ID, c.Visibility, want)
+	left := *c
+	left.Visibility = reached
 	if err != nil {
-		left := *c
-		left.Visibility = reached
+		var confirmed bool
+		left.Visibility, confirmed = r.visibilityAfterFailure(ctx, c.ID, reached)
 		diags.Append(setConnectorState(ctx, left, state, identity)...)
-		diags.AddError("Cannot change the visibility of the connector", fmt.Sprintf("%s, with the visibility %s: %s", done, reached, err))
+		diags.AddError("Cannot change the visibility of the connector", fmt.Sprintf("%s, %s: %s", done, leftWith(left.Visibility, confirmed), err))
 		return
 	}
-	// The share calls answer a message, not the connector.
-	got, err := getConnectorByID(ctx, r.client, c.ID)
-	if err == nil && got == nil {
-		err = fmt.Errorf("no connector has the ID %q any more", c.ID)
-	}
+	got, err := r.readBack(ctx, c.ID)
 	if err != nil {
-		diags.Append(setConnectorState(ctx, *c, state, identity)...)
+		diags.Append(setConnectorState(ctx, left, state, identity)...)
 		diags.AddError("Cannot read the connector", err.Error())
 		return
 	}
@@ -412,13 +450,14 @@ func (r *ConnectorResource) applyVisibility(ctx context.Context, c *client.Conne
 }
 
 // moveVisibility takes the connector id from one visibility to another, and
-// returns the visibility the calls left it with: to, from when the unshare
-// fails, private when the share fails. A share call "transfers ownership of
-// a private user-owned connector", so a shared connector goes back to
-// private first: from shared_workspace to shared_org is an unshare from the
-// workspace, then a share with the organization, and the reverse likewise.
-// An unshare removes the credentials of the scope the connector leaves,
-// except its creator's.
+// returns the visibility its answers point to: to, from when the unshare
+// fails, private when the share fails. After a failure, a replayed call can
+// make that wrong, which visibilityAfterFailure checks. A share call
+// "transfers ownership of a private user-owned connector", so a shared
+// connector goes back to private first: from shared_workspace to shared_org
+// is an unshare from the workspace, then a share with the organization, and
+// the reverse likewise. An unshare removes the credentials of the scope the
+// connector leaves, except its creator's.
 func (r *ConnectorResource) moveVisibility(ctx context.Context, id, from, to string) (string, error) {
 	if from != client.ConnectorPrivate {
 		if err := r.client.UnshareConnector(ctx, id, from); err != nil {
