@@ -106,6 +106,22 @@ func updatedAtAttribute(noun string) schema.StringAttribute {
 	}
 }
 
+// planUpdatedAt plans updated_at as unknown when the plan changes the object,
+// for the ModifyPlan of mistral_prompt and mistral_skill. The framework marks
+// the computed attributes unknown only when the proposed new state differs
+// from the prior one, which it checks before the plan modifiers run. A change
+// that relationDefault alone makes, workspace_relation back to writer when
+// the configuration leaves it out, would otherwise keep the prior updated_at
+// in the plan, and the update that changes it would fail with "Provider
+// produced inconsistent result after apply". A create plans it unknown
+// already; a destroy plans nothing.
+func planUpdatedAt(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || resp.Plan.Raw.Equal(req.State.Raw) {
+		return
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("updated_at"), types.StringUnknown())...)
+}
+
 // nonEmpty maps a string the API returns to the state: the API omits an
 // empty field, so "" and an absent field both read as null, and an optional
 // argument refuses "" (LengthAtLeast(1)) so the two never fight.

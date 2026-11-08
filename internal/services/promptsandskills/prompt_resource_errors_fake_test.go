@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	"github.com/ippontech/terraform-provider-mistral/internal/providertest"
 )
@@ -38,7 +39,7 @@ func TestPromptResourceCreateIsSentOnceOnA5xx(t *testing.T) {
 }
 
 // A new version that meets a 5xx is sent once, and nothing else is called:
-// the version comes first.
+// the version comes first when the sharing does not narrow.
 func TestPromptResourceNewVersionIsSentOnceOnA5xx(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
@@ -48,9 +49,10 @@ func TestPromptResourceNewVersionIsSentOnceOnA5xx(t *testing.T) {
 		Steps: []resource.TestStep{
 			{Config: promptConfig(minimalPrompt)},
 			{
-				PreConfig:   func() { f.FailNext(routePromptVersion, 503, 1) },
-				Config:      promptConfig(secondPrompt),
-				ExpectError: regexp.MustCompile(`Cannot\s+create\s+a\s+version\s+of\s+the\s+prompt(.|\n)*503`),
+				PreConfig: func() { f.FailNext(routePromptVersion, 503, 1) },
+				Config:    promptConfig(secondPrompt),
+				ExpectError: regexp.MustCompile(`Cannot\s+create\s+a\s+version\s+of\s+the\s+prompt(.|\n)*503(.|\n)*` +
+					`Not\s+attempted:\s+the\s+title,\s+description\s+and\s+sharing\s+of\s+the\s+prompt\.`),
 			},
 		},
 	})
@@ -58,8 +60,9 @@ func TestPromptResourceNewVersionIsSentOnceOnA5xx(t *testing.T) {
 	f.AssertCalled(routePromptUpdate, 0)
 }
 
-// When the update of the prompt fails after its new version, the next plan
-// reads the version and holds the update of the prompt only.
+// When the update of the prompt fails after its new version, the diagnostic
+// names the version, and the next plan reads it and holds the update of the
+// prompt only.
 func TestPromptResourceRepairsAnUpdateThatFailedAfterItsVersion(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
@@ -69,9 +72,10 @@ func TestPromptResourceRepairsAnUpdateThatFailedAfterItsVersion(t *testing.T) {
 		Steps: []resource.TestStep{
 			{Config: promptConfig(minimalPrompt)},
 			{
-				PreConfig:   func() { f.FailNext(routePromptUpdate, 500, 1) },
-				Config:      promptConfig(secondPrompt),
-				ExpectError: regexp.MustCompile(`Cannot\s+update\s+the\s+prompt(.|\n)*500`),
+				PreConfig: func() { f.FailNext(routePromptUpdate, 500, 1) },
+				Config:    promptConfig(secondPrompt),
+				ExpectError: regexp.MustCompile(`Cannot\s+update\s+the\s+prompt(.|\n)*500(.|\n)*` +
+					`Already\s+applied:\s+version\s+2,\s+with\s+the\s+planned\s+definition\.`),
 			},
 			{
 				Config:            promptConfig(secondPrompt),
@@ -82,6 +86,142 @@ func TestPromptResourceRepairsAnUpdateThatFailedAfterItsVersion(t *testing.T) {
 	})
 	f.AssertCalled(routePromptVersion, 1)
 	f.AssertCalled(routePromptUpdate, 2)
+}
+
+// When the update that narrows the sharing fails, nothing else is sent: the
+// earlier template stays the latest version. When the version fails after
+// that update, the diagnostic says what the update applied, and the next
+// plan reads it and holds the version only.
+func TestPromptResourceCreatesNoVersionWhenNarrowingTheSharingFails(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config: promptConfig(sharedPrompt),
+				Check: func(s *terraform.State) error {
+					id = s.RootModule().Resources[promptAddr].Primary.ID
+					return nil
+				},
+			},
+			{
+				PreConfig: func() { f.FailNext(routePromptUpdate, 500, 1) },
+				Config:    promptConfig(privatePrompt),
+				ExpectError: regexp.MustCompile(`Cannot\s+update\s+the\s+prompt(.|\n)*500(.|\n)*` +
+					`Not\s+attempted:\s+a\s+new\s+version\s+with\s+the\s+planned\s+definition\.`),
+			},
+			{
+				PreConfig: func() {
+					f.prompts.assertLatest(id, 1, map[string]any{"content": "You are a coding assistant."})
+					f.FailNextWith(routePromptVersion, 400, "Content refused", 1)
+				},
+				Config: promptConfig(privatePrompt),
+				ExpectError: regexp.MustCompile(`Cannot\s+create\s+a\s+version\s+of\s+the\s+prompt(.|\n)*Content\s+refused(.|\n)*` +
+					`Already\s+applied:\s+the\s+title,\s+description\s+and\s+sharing\s+of\s+the\s+prompt\.`),
+			},
+			{
+				Config:           promptConfig(privatePrompt),
+				ConfigPlanChecks: expectNewVersion(promptAddr),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(2),
+					"content":            knownvalue.StringExact("You are a private coding assistant."),
+					"sharing_scope":      knownvalue.StringExact("private"),
+					"workspace_relation": knownvalue.Null(),
+				}),
+			},
+		},
+	})
+
+	// The update that failed, the update and the refused version, then the
+	// version alone: the refresh read the private scope.
+	f.assertWrites(routePromptCreate,
+		routePromptUpdate,
+		routePromptUpdate, routePromptVersion,
+		routePromptVersion,
+		routePromptDelete)
+}
+
+// When the version fails after the update that makes the workspace readers,
+// the state records reader, which no answer holds. A configuration set back
+// to writers and to the earlier template then plans the update of the prompt
+// and sends writer, instead of planning nothing while the API keeps reader.
+func TestPromptResourceRecordsTheRelationOfAnUpdateBeforeAFailedVersion(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: promptConfig(sharedPrompt)},
+			{
+				PreConfig: func() { f.FailNextWith(routePromptVersion, 400, "Content refused", 1) },
+				Config:    promptConfig(readOnlyPrompt),
+				ExpectError: regexp.MustCompile(`Cannot\s+create\s+a\s+version\s+of\s+the\s+prompt(.|\n)*Content\s+refused(.|\n)*` +
+					`Already\s+applied:\s+the\s+title,\s+description\s+and\s+sharing\s+of\s+the\s+prompt\.`),
+			},
+			{
+				Config:           promptConfig(sharedPrompt),
+				ConfigPlanChecks: expectSameVersion(promptAddr, 1),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(1),
+					"content":            knownvalue.StringExact("You are a coding assistant."),
+					"sharing_scope":      knownvalue.StringExact("workspace"),
+					"workspace_relation": knownvalue.StringExact("writer"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routePromptCreate,
+		routePromptUpdate, routePromptVersion,
+		routePromptUpdate,
+		routePromptDelete)
+	f.AssertJSONBodies(routePromptUpdate,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "reader"}`,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "writer"}`)
+}
+
+// In the default order too, an update of the prompt that a later failure
+// follows is recorded: a widening to writers whose definition Mistral matches
+// to an earlier version fails after the update (notLatest), and a
+// configuration set back to readers then plans the update and sends reader.
+func TestPromptResourceRecordsTheRelationOfAnUpdateBeforeAVersionThatIsNotTheLatest(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	f.dedupAnyVersion = true
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: promptConfig(readerPrompt)},
+			{Config: promptConfig(readOnlyPrompt)},
+			{
+				Config: promptConfig(sharedPrompt),
+				ExpectError: regexp.MustCompile(`did\s+not\s+get\s+a\s+new\s+latest\s+version(.|\n)*` +
+					`Already\s+applied:\s+the\s+title,\s+description\s+and\s+sharing\s+of\s+the\s+prompt\.`),
+			},
+			{
+				Config:           promptConfig(readOnlyPrompt),
+				ConfigPlanChecks: expectSameVersion(promptAddr, 2),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(2),
+					"workspace_relation": knownvalue.StringExact("reader"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routePromptCreate,
+		routePromptVersion,
+		routePromptVersion, routePromptUpdate,
+		routePromptUpdate,
+		routePromptDelete)
+	f.AssertJSONBodies(routePromptUpdate,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "writer"}`,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "reader"}`)
 }
 
 // A name already taken points to an import block rather than adopting the

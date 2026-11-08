@@ -112,6 +112,42 @@ func relationRequest(scope, relation types.String) *string {
 	return relation.ValueStringPointer()
 }
 
+// narrowsSharing reports whether the planned sharing grants less access than
+// the prior one, which decides the order of an update (versionedUpdate.apply):
+// sharing_scope from workspace to private, or workspace_relation from writer
+// to reader with the workspace scope.
+//
+// The second one hides the new definition from no one, since a reader reads
+// it too: updating the object first only withdraws the write access a moment
+// earlier, and a version another member creates meanwhile already fails the
+// apply (notLatest). It counts as narrowing anyway, which costs nothing.
+func narrowsSharing(plannedScope, plannedRelation, priorScope, priorRelation types.String) bool {
+	return sharingAccess(plannedScope, plannedRelation) < sharingAccess(priorScope, priorRelation)
+}
+
+// sharingAccess ranks sharing settings by the access they grant: 0 private,
+// 1 the workspace as reader, 2 the workspace as writer. A null relation with
+// the workspace scope ranks as writer: it is the API's default ("Defaults to
+// `writer`"), and the state holds it after an import, the API not returning
+// the relation. A scope this provider does not know, which only a read can
+// bring into the state, ranks above all: leaving it counts as narrowing, so
+// the new definition never reaches an audience this provider cannot rank.
+// Were that scope narrower, the earlier definition would only reach the
+// planned audience a moment before the new one.
+func sharingAccess(scope, relation types.String) int {
+	switch scope.ValueString() {
+	case scopePrivate:
+		return 0
+	case scopeWorkspace:
+		if relation.ValueString() == relationReader {
+			return 1
+		}
+		return 2
+	default:
+		return 3
+	}
+}
+
 // scopeState maps the scope the API returns. An absent or unspecified scope
 // reads as private, the schema default; any other value is kept as
 // returned, so a scope this provider does not know shows as drift.

@@ -177,9 +177,9 @@ func TestPromptResourceLifecycle(t *testing.T) {
 				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{"notes": knownvalue.Null()}),
 			},
 			{
-				// Emptying the optional fields clears them: a version without
-				// variables, then the prompt without title, description or
-				// sharing.
+				// Emptying the optional fields clears them: the prompt without
+				// title, description or sharing first, since the sharing
+				// narrows, then a version without variables.
 				Config:           promptConfig(trimmedPrompt),
 				ConfigPlanChecks: expectNewVersion(promptAddr),
 				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
@@ -338,4 +338,125 @@ resource "mistral_prompt" "this" {
 	})
 	f.AssertCalled(routePromptUpdate, 0)
 	f.AssertCalled(routePromptVersion, 0)
+}
+
+// The configurations of the sharing tests: each one after sharedPrompt
+// changes the template and the sharing in one apply.
+const (
+	sharedPrompt = `
+  name          = "coding-assistant"
+  content       = "You are a coding assistant."
+  sharing_scope = "workspace"
+`
+	readOnlyPrompt = `
+  name               = "coding-assistant"
+  content            = "You are a careful coding assistant."
+  sharing_scope      = "workspace"
+  workspace_relation = "reader"
+`
+	privatePrompt = `
+  name    = "coding-assistant"
+  content = "You are a private coding assistant."
+`
+	reSharedPrompt = `
+  name          = "coding-assistant"
+  content       = "You are a shared coding assistant."
+  sharing_scope = "workspace"
+`
+	// readerPrompt is sharedPrompt with the workspace as readers.
+	readerPrompt = `
+  name               = "coding-assistant"
+  content            = "You are a coding assistant."
+  sharing_scope      = "workspace"
+  workspace_relation = "reader"
+`
+)
+
+// A configuration that drops workspace_relation = "reader" plans writer, the
+// default, and nothing else: the update of the prompt sends it, and
+// updated_at is unknown in the plan, since the update changes it.
+func TestPromptResourcePlansTheDefaultRelationAsAnUpdate(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	checks := expectSameVersion(promptAddr, 1)
+	checks.PreApply = append(checks.PreApply, plancheck.ExpectUnknownValue(promptAddr, tfjsonpath.New("updated_at")))
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: promptConfig(readerPrompt)},
+			{
+				Config:           promptConfig(sharedPrompt),
+				ConfigPlanChecks: checks,
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"workspace_relation": knownvalue.StringExact("writer"),
+					"updated_at":         knownvalue.StringExact(at(2)),
+				}),
+			},
+		},
+	})
+
+	f.AssertJSONBodies(routePromptUpdate,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "writer"}`)
+}
+
+// An apply that changes the template and narrows the sharing updates the
+// prompt before it creates the version, so that the new template is never
+// readable by the members the plan excludes: writers to readers, then the
+// workspace to private. One that widens the sharing creates the version
+// first.
+func TestPromptResourceNarrowsTheSharingBeforeCreatingAVersion(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: promptConfig(sharedPrompt)},
+			{
+				Config:           promptConfig(readOnlyPrompt),
+				ConfigPlanChecks: expectNewVersion(promptAddr),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(2),
+					"content":            knownvalue.StringExact("You are a careful coding assistant."),
+					"sharing_scope":      knownvalue.StringExact("workspace"),
+					"workspace_relation": knownvalue.StringExact("reader"),
+				}),
+			},
+			{
+				Config:           promptConfig(privatePrompt),
+				ConfigPlanChecks: expectNewVersion(promptAddr),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(3),
+					"content":            knownvalue.StringExact("You are a private coding assistant."),
+					"sharing_scope":      knownvalue.StringExact("private"),
+					"workspace_relation": knownvalue.Null(),
+				}),
+			},
+			{
+				Config:           promptConfig(reSharedPrompt),
+				ConfigPlanChecks: expectNewVersion(promptAddr),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(4),
+					"content":            knownvalue.StringExact("You are a shared coding assistant."),
+					"sharing_scope":      knownvalue.StringExact("workspace"),
+					"workspace_relation": knownvalue.StringExact("writer"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routePromptCreate,
+		routePromptUpdate, routePromptVersion,
+		routePromptUpdate, routePromptVersion,
+		routePromptVersion, routePromptUpdate,
+		routePromptDelete)
+	f.AssertJSONBodies(routePromptUpdate,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "reader"}`,
+		`{"title": "", "description": "", "sharingScope": "private", "workspaceRelation": null}`,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "writer"}`)
+	f.AssertJSONBodies(routePromptVersion,
+		`{"definition": {"content": "You are a careful coding assistant.", "variables": []}, "notes": null}`,
+		`{"definition": {"content": "You are a private coding assistant.", "variables": []}, "notes": null}`,
+		`{"definition": {"content": "You are a shared coding assistant.", "variables": []}, "notes": null}`)
 }

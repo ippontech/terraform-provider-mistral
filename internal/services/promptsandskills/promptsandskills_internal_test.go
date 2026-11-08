@@ -31,7 +31,7 @@ func stubUpdate(c changes, created client.CreatedVersion, latest int64, failing 
 		return &latest, nil
 	}
 	return versionedUpdate[int64]{
-		noun: "prompt", changes: c, version: 1,
+		noun: "prompt", parentFields: "the title, description and sharing of the prompt", changes: c, version: 1,
 		newVersion: func(context.Context) (*client.CreatedVersion, error) {
 			calls = append(calls, "newVersion")
 			if failing == "newVersion" {
@@ -41,35 +41,123 @@ func stubUpdate(c changes, created client.CreatedVersion, latest int64, failing 
 		},
 		setNotes:     func(context.Context) (*int64, error) { return answer("setNotes") },
 		updateParent: func(context.Context) (*int64, error) { return answer("updateParent") },
-		get:          func(context.Context) (*int64, error) { return answer("get") },
-		versionOf:    func(v *int64) int64 { return *v },
+		recordParent: func(context.Context) diag.Diagnostics {
+			calls = append(calls, "recordParent")
+			if failing == "recordParent" {
+				return diag.Diagnostics{diag.NewErrorDiagnostic("recordParent failed", "the state refused it")}
+			}
+			return nil
+		},
+		get:       func(context.Context) (*int64, error) { return answer("get") },
+		versionOf: func(v *int64) int64 { return *v },
 	}, &calls
 }
 
-// The calls of an update, in order, and the diagnostic of each failing one.
+// The calls of an update, in order, in both orders, and the diagnostic of
+// each failing one: its summary, then what the calls before it applied and
+// the writes after it, which are not attempted. recordParent follows every
+// successful update of the prompt at once, and no failed one.
 func TestVersionedUpdateOrdersItsCalls(t *testing.T) {
 	t.Parallel()
 	all := changes{definition: true, notes: true, parent: true}
+	notesAndParent := changes{notes: true, parent: true}
+	created := client.CreatedVersion{Version: 2}
+	const (
+		appliedVersion = "\n\nAlready applied: version 2, with the planned definition."
+		appliedParent  = "\n\nAlready applied: the title, description and sharing of the prompt."
+	)
 	cases := map[string]struct {
-		changes   changes
-		created   client.CreatedVersion
-		failing   string
-		wantCalls string
-		wantError string
+		changes    changes
+		narrowing  bool
+		created    client.CreatedVersion
+		failing    string
+		wantCalls  string
+		wantError  string // the summary of the error, "" for none
+		wantDetail string
 	}{
-		"version then prompt then read": {all, client.CreatedVersion{Version: 2}, "", "newVersion updateParent get", ""},
-		"notes then prompt":             {changes{notes: true, parent: true}, client.CreatedVersion{}, "", "setNotes updateParent", ""},
-		"prompt alone":                  {changes{parent: true}, client.CreatedVersion{}, "", "updateParent", ""},
-		"nothing but a read":            {changes{}, client.CreatedVersion{}, "", "get", ""},
-		"failed version":                {all, client.CreatedVersion{Version: 2}, "newVersion", "newVersion", "Cannot create a version of the prompt"},
-		"failed notes":                  {changes{notes: true}, client.CreatedVersion{}, "setNotes", "setNotes", "Cannot update the notes of version 1 of the prompt"},
-		"failed read":                   {changes{definition: true}, client.CreatedVersion{Version: 2}, "get", "newVersion get", "Cannot read the prompt"},
-		"a concurrent version":          {changes{definition: true}, client.CreatedVersion{Version: 1}, "", "newVersion get", "did not get a new latest version"},
+		"version then prompt then read": {changes: all, created: created, wantCalls: "newVersion updateParent recordParent get"},
+		"notes then prompt":             {changes: notesAndParent, wantCalls: "setNotes updateParent recordParent"},
+		"prompt alone":                  {changes: changes{parent: true}, wantCalls: "updateParent recordParent"},
+		"nothing but a read":            {changes: changes{}, wantCalls: "get"},
+		"failed version": {
+			changes: all, created: created, failing: "newVersion", wantCalls: "newVersion",
+			wantError:  "Cannot create a version of the prompt",
+			wantDetail: "newVersion failed\n\nNot attempted: the title, description and sharing of the prompt.",
+		},
+		"failed notes": {
+			changes: changes{notes: true}, failing: "setNotes", wantCalls: "setNotes",
+			wantError: "Cannot update the notes of version 1 of the prompt", wantDetail: "setNotes failed",
+		},
+		"failed prompt after its version": {
+			changes: all, created: created, failing: "updateParent", wantCalls: "newVersion updateParent",
+			wantError: "Cannot update the prompt", wantDetail: "updateParent failed" + appliedVersion,
+		},
+		"failed prompt after the notes": {
+			changes: notesAndParent, failing: "updateParent", wantCalls: "setNotes updateParent",
+			wantError: "Cannot update the prompt", wantDetail: "updateParent failed\n\nAlready applied: the notes of version 1.",
+		},
+		"failed read": {
+			changes: changes{definition: true}, created: created, failing: "get", wantCalls: "newVersion get",
+			wantError: "Cannot read the prompt", wantDetail: "get failed" + appliedVersion,
+		},
+		"a concurrent version": {
+			changes: changes{definition: true}, created: client.CreatedVersion{Version: 1}, wantCalls: "newVersion get",
+			wantError:  "The prompt did not get a new latest version",
+			wantDetail: notLatest("prompt", client.CreatedVersion{Version: 1}, 2) + "\n\nAlready applied: version 1, with the planned definition.",
+		},
+		// A deduplicated definition changes nothing, so only the prompt
+		// shows as applied.
+		"a deduplicated version": {
+			changes: changes{definition: true, parent: true}, created: client.CreatedVersion{Version: 1, Deduplicated: true},
+			wantCalls: "newVersion updateParent recordParent get", wantError: "The prompt did not get a new latest version",
+			wantDetail: notLatest("prompt", client.CreatedVersion{Version: 1, Deduplicated: true}, 2) + appliedParent,
+		},
+		"narrowing: prompt then version then read": {changes: all, narrowing: true, created: created, wantCalls: "updateParent recordParent newVersion get"},
+		"narrowing: prompt then notes":             {changes: notesAndParent, narrowing: true, wantCalls: "updateParent recordParent setNotes"},
+		"narrowing without a change of the prompt": {changes: changes{definition: true}, narrowing: true, created: created, wantCalls: "newVersion get"},
+		"narrowing: failed prompt": {
+			changes: all, narrowing: true, created: created, failing: "updateParent", wantCalls: "updateParent",
+			wantError:  "Cannot update the prompt",
+			wantDetail: "updateParent failed\n\nNot attempted: a new version with the planned definition.",
+		},
+		"narrowing: failed prompt before the notes": {
+			changes: notesAndParent, narrowing: true, failing: "updateParent", wantCalls: "updateParent",
+			wantError: "Cannot update the prompt", wantDetail: "updateParent failed\n\nNot attempted: the notes of version 1.",
+		},
+		"narrowing: failed version": {
+			changes: all, narrowing: true, created: created, failing: "newVersion", wantCalls: "updateParent recordParent newVersion",
+			wantError: "Cannot create a version of the prompt", wantDetail: "newVersion failed" + appliedParent,
+		},
+		"narrowing: failed notes": {
+			changes: notesAndParent, narrowing: true, failing: "setNotes", wantCalls: "updateParent recordParent setNotes",
+			wantError: "Cannot update the notes of version 1 of the prompt", wantDetail: "setNotes failed" + appliedParent,
+		},
+		"narrowing: failed read": {
+			changes: all, narrowing: true, created: created, failing: "get", wantCalls: "updateParent recordParent newVersion get",
+			wantError:  "Cannot read the prompt",
+			wantDetail: "get failed\n\nAlready applied: the title, description and sharing of the prompt; version 2, with the planned definition.",
+		},
+		"failed read after the prompt": {
+			changes: all, created: created, failing: "get", wantCalls: "newVersion updateParent recordParent get",
+			wantError:  "Cannot read the prompt",
+			wantDetail: "get failed\n\nAlready applied: version 2, with the planned definition; the title, description and sharing of the prompt.",
+		},
+		// A state that cannot record the update of the prompt ends the
+		// apply: nothing else is sent.
+		"narrowing: failed record": {
+			changes: all, narrowing: true, created: created, failing: "recordParent", wantCalls: "updateParent recordParent",
+			wantError: "recordParent failed", wantDetail: "the state refused it",
+		},
+		"failed record after the version": {
+			changes: all, created: created, failing: "recordParent", wantCalls: "newVersion updateParent recordParent",
+			wantError: "recordParent failed", wantDetail: "the state refused it",
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			u, calls := stubUpdate(c.changes, c.created, 2, c.failing)
+			u.narrowsSharing = c.narrowing
 			var diags diag.Diagnostics
 			got := u.apply(context.Background(), &diags)
 			if strings.Join(*calls, " ") != c.wantCalls {
@@ -81,10 +169,51 @@ func TestVersionedUpdateOrdersItsCalls(t *testing.T) {
 				}
 				return
 			}
-			if got != nil || !diags.HasError() || !strings.Contains(diags.Errors()[0].Summary(), c.wantError) {
-				t.Errorf("apply = %v, %v, want the error %q", got, diags, c.wantError)
+			if got != nil || len(diags) != 1 || !diags.HasError() {
+				t.Fatalf("apply = %v, %v, want the error %q", got, diags, c.wantError)
+			}
+			if s := diags[0].Summary(); s != c.wantError {
+				t.Errorf("summary = %q, want %q", s, c.wantError)
+			}
+			if d := diags[0].Detail(); d != c.wantDetail {
+				t.Errorf("detail = %q, want %q", d, c.wantDetail)
 			}
 		})
+	}
+}
+
+// The planned sharing narrows the prior one when it grants less access:
+// private below the workspace as reader, below the workspace as writer, below
+// a scope this provider does not know.
+func TestNarrowsSharing(t *testing.T) {
+	t.Parallel()
+	null := types.StringNull()
+	private, workspace := types.StringValue(scopePrivate), types.StringValue(scopeWorkspace)
+	reader, writer := types.StringValue(relationReader), types.StringValue(relationWriter)
+	unknownScope := types.StringValue("organization")
+	type sharing struct{ scope, relation types.String }
+	cases := map[string]struct {
+		planned, prior sharing
+		want           bool
+	}{
+		"workspace to private":              {sharing{private, null}, sharing{workspace, writer}, true},
+		"workspace readers to private":      {sharing{private, null}, sharing{workspace, reader}, true},
+		"writer to reader":                  {sharing{workspace, reader}, sharing{workspace, writer}, true},
+		"imported relation to reader":       {sharing{workspace, reader}, sharing{workspace, null}, true},
+		"an unknown scope to the workspace": {sharing{workspace, writer}, sharing{unknownScope, null}, true},
+		"an unknown scope to private":       {sharing{private, null}, sharing{unknownScope, null}, true},
+		"private to workspace":              {sharing{workspace, writer}, sharing{private, null}, false},
+		"private to workspace readers":      {sharing{workspace, reader}, sharing{private, null}, false},
+		"reader to writer":                  {sharing{workspace, writer}, sharing{workspace, reader}, false},
+		"imported relation to writer":       {sharing{workspace, writer}, sharing{workspace, null}, false},
+		"private kept":                      {sharing{private, null}, sharing{private, null}, false},
+		"workspace readers kept":            {sharing{workspace, reader}, sharing{workspace, reader}, false},
+		"workspace writers kept":            {sharing{workspace, writer}, sharing{workspace, writer}, false},
+	}
+	for name, c := range cases {
+		if got := narrowsSharing(c.planned.scope, c.planned.relation, c.prior.scope, c.prior.relation); got != c.want {
+			t.Errorf("%s: narrowsSharing = %v, want %v", name, got, c.want)
+		}
 	}
 }
 

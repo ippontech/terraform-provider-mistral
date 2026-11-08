@@ -133,7 +133,8 @@ func TestSkillResourceLifecycle(t *testing.T) {
 			},
 			{
 				// The notes removed alone, and the scope back to private: the
-				// notes of version 3, then the update of the skill.
+				// update of the skill first, since the sharing narrows, then
+				// the notes of version 3.
 				Config:           skillConfig(privateSkill),
 				ConfigPlanChecks: expectSameVersion(skillAddr, 3),
 				ConfigStateChecks: stateIs(skillAddr, map[string]knownvalue.Check{
@@ -393,4 +394,163 @@ resource "mistral_skill" "other" {
 `,
 		}},
 	})
+}
+
+// The configurations of the sharing tests: each one after sharedSkill
+// changes the body and the sharing in one apply.
+const (
+	sharedSkill = `
+  name          = "extract-invoices"
+  body          = "Extract the totals of the invoice."
+  sharing_scope = "workspace"
+`
+	unsharedSkill = `
+  name = "extract-invoices"
+  body = "Extract the totals and the VAT of the invoice."
+`
+	reSharedSkill = `
+  name               = "extract-invoices"
+  body               = "Extract the totals, the VAT and the due date of the invoice."
+  sharing_scope      = "workspace"
+  workspace_relation = "reader"
+`
+)
+
+// An apply that changes the body and narrows the sharing, from the
+// workspace to private, updates the skill before it creates the version, so
+// that the new body is never readable by the workspace. One that widens the
+// sharing creates the version first.
+func TestSkillResourceNarrowsTheSharingBeforeCreatingAVersion(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: skillConfig(sharedSkill)},
+			{
+				Config:           skillConfig(unsharedSkill),
+				ConfigPlanChecks: expectNewVersion(skillAddr),
+				ConfigStateChecks: stateIs(skillAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(2),
+					"body":               knownvalue.StringExact("Extract the totals and the VAT of the invoice."),
+					"sharing_scope":      knownvalue.StringExact("private"),
+					"workspace_relation": knownvalue.Null(),
+				}),
+			},
+			{
+				Config:           skillConfig(reSharedSkill),
+				ConfigPlanChecks: expectNewVersion(skillAddr),
+				ConfigStateChecks: stateIs(skillAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(3),
+					"body":               knownvalue.StringExact("Extract the totals, the VAT and the due date of the invoice."),
+					"sharing_scope":      knownvalue.StringExact("workspace"),
+					"workspace_relation": knownvalue.StringExact("reader"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routeSkillCreate,
+		routeSkillUpdate, routeSkillVersion,
+		routeSkillVersion, routeSkillUpdate,
+		routeSkillDelete)
+	f.AssertJSONBodies(routeSkillUpdate,
+		`{"sharingScope": "private", "workspaceRelation": null}`,
+		`{"sharingScope": "workspace", "workspaceRelation": "reader"}`)
+	f.AssertJSONBodies(routeSkillVersion,
+		`{"definition": {"description": "", "body": "Extract the totals and the VAT of the invoice.", "assets": {}}, "notes": null}`,
+		`{"definition": {"description": "", "body": "Extract the totals, the VAT and the due date of the invoice.", "assets": {}}, "notes": null}`)
+}
+
+// When the update that narrows the sharing fails, nothing else is sent: the
+// earlier body stays the latest version. When the version fails after that
+// update, the diagnostic says the sharing is applied, and the next plan
+// holds the version only.
+func TestSkillResourceCreatesNoVersionWhenNarrowingTheSharingFails(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config: skillConfig(sharedSkill),
+				Check: func(s *terraform.State) error {
+					id = s.RootModule().Resources[skillAddr].Primary.ID
+					return nil
+				},
+			},
+			{
+				PreConfig: func() { f.FailNext(routeSkillUpdate, 503, 1) },
+				Config:    skillConfig(unsharedSkill),
+				ExpectError: regexp.MustCompile(`Cannot\s+update\s+the\s+skill(.|\n)*503(.|\n)*` +
+					`Not\s+attempted:\s+a\s+new\s+version\s+with\s+the\s+planned\s+definition\.`),
+			},
+			{
+				PreConfig: func() {
+					f.skills.assertLatest(id, 1, map[string]any{"body": "Extract the totals of the invoice."})
+					f.FailNextWith(routeSkillVersion, 400, "Body refused", 1)
+				},
+				Config: skillConfig(unsharedSkill),
+				ExpectError: regexp.MustCompile(`Cannot\s+create\s+a\s+version\s+of\s+the\s+skill(.|\n)*Body\s+refused(.|\n)*` +
+					`Already\s+applied:\s+the\s+sharing\s+of\s+the\s+skill\.`),
+			},
+			{
+				Config:           skillConfig(unsharedSkill),
+				ConfigPlanChecks: expectNewVersion(skillAddr),
+				ConfigStateChecks: stateIs(skillAddr, map[string]knownvalue.Check{
+					"version":       knownvalue.Int64Exact(2),
+					"sharing_scope": knownvalue.StringExact("private"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routeSkillCreate,
+		routeSkillUpdate,
+		routeSkillUpdate, routeSkillVersion,
+		routeSkillVersion,
+		routeSkillDelete)
+}
+
+// When the version fails after the update that makes the workspace readers,
+// the state records reader, which no answer holds. A configuration set back
+// to writers and to the earlier body then plans the update of the skill and
+// sends writer, instead of planning nothing while the API keeps reader.
+func TestSkillResourceRecordsTheRelationOfAnUpdateBeforeAFailedVersion(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: skillConfig(sharedSkill)},
+			{
+				PreConfig: func() { f.FailNextWith(routeSkillVersion, 400, "Body refused", 1) },
+				Config:    skillConfig(reSharedSkill),
+				ExpectError: regexp.MustCompile(`Cannot\s+create\s+a\s+version\s+of\s+the\s+skill(.|\n)*Body\s+refused(.|\n)*` +
+					`Already\s+applied:\s+the\s+sharing\s+of\s+the\s+skill\.`),
+			},
+			{
+				Config:           skillConfig(sharedSkill),
+				ConfigPlanChecks: expectSameVersion(skillAddr, 1),
+				ConfigStateChecks: stateIs(skillAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(1),
+					"body":               knownvalue.StringExact("Extract the totals of the invoice."),
+					"sharing_scope":      knownvalue.StringExact("workspace"),
+					"workspace_relation": knownvalue.StringExact("writer"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routeSkillCreate,
+		routeSkillUpdate, routeSkillVersion,
+		routeSkillUpdate,
+		routeSkillDelete)
+	f.AssertJSONBodies(routeSkillUpdate,
+		`{"sharingScope": "workspace", "workspaceRelation": "reader"}`,
+		`{"sharingScope": "workspace", "workspaceRelation": "writer"}`)
 }
