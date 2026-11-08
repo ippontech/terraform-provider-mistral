@@ -4,6 +4,8 @@
 package connectors_test
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
 	"github.com/ippontech/terraform-provider-mistral/internal/providertest"
@@ -89,7 +92,7 @@ func TestConnectorResourceKeepsAConnectorWhoseShareFailed(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      connectorConfig(minimalConnector),
-				ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*ShareConnectorToWorkspace`),
+				ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*The\s+connector\s+is\s+created,\s+with\s+the\s+visibility\s+private(.|\n)*ShareConnectorToWorkspace`),
 			},
 			{
 				Config:           connectorConfig(minimalConnector),
@@ -120,32 +123,339 @@ func TestConnectorResourceReportsTheReadAfterAShare(t *testing.T) {
 	f.AssertCalled(routeDelete, 1)
 }
 
-// When the unshare fails, the state keeps what the PATCH answered, with the
-// visibility unchanged: the next apply tries the share calls again.
-func TestConnectorResourceReportsAFailedUnshare(t *testing.T) {
+// expectBefore checks the value an attribute of the connector holds before
+// a plan. With the refresh off, it is what the previous apply left in the
+// state, failed or not.
+type expectBefore struct {
+	attribute, want string
+}
+
+// CheckPlan fails unless the attribute of the planned change of the
+// connector held want before the plan.
+func (e expectBefore) CheckPlan(_ context.Context, req plancheck.CheckPlanRequest, resp *plancheck.CheckPlanResponse) {
+	for _, rc := range req.Plan.ResourceChanges {
+		if rc.Address != connectorAddr {
+			continue
+		}
+		before, _ := rc.Change.Before.(map[string]any)
+		if got := before[e.attribute]; got != e.want {
+			resp.Error = fmt.Errorf("%s.%s before the plan = %#v, want %q", connectorAddr, e.attribute, got, e.want)
+		}
+		return
+	}
+	resp.Error = fmt.Errorf("no planned change for %s", connectorAddr)
+}
+
+// noRefresh plans without a refresh, as a saved plan or -refresh=false
+// does: the plan then starts from what the previous apply left in the state.
+var noRefresh = &resource.AdditionalCLIOptions{Plan: resource.PlanOptions{NoRefresh: true}}
+
+// expectUpdateFrom checks that the plan updates the connector from the
+// visibility and the server the previous apply left in the state, and that
+// the plan after the apply is empty.
+func expectUpdateFrom(visibility, server string) resource.ConfigPlanChecks {
+	checks := providertest.ExpectAction(connectorAddr, plancheck.ResourceActionUpdate)
+	checks.PreApply = append(checks.PreApply, expectBefore{"visibility", visibility}, expectBefore{"server", server})
+	return checks
+}
+
+// expectMoved checks that the state holds the new server with the
+// visibility want.
+func expectMoved(want string) []statecheck.StateCheck {
+	return []statecheck.StateCheck{
+		statecheck.ExpectKnownValue(connectorAddr, tfjsonpath.New("server"), knownvalue.StringExact(newServer)),
+		statecheck.ExpectKnownValue(connectorAddr, tfjsonpath.New("visibility"), knownvalue.StringExact(want)),
+	}
+}
+
+// expectConnector fails the test unless the fake holds the connector id
+// with this server and visibility.
+func (f *fake) expectConnector(t *testing.T, id, server, visibility string) {
+	t.Helper()
+	if got, _ := f.connectors.Get(id); got["server"] != server || got["visibility"] != visibility {
+		t.Errorf("the connector is %v, want the server %s with the visibility %s", got, server, visibility)
+	}
+}
+
+// keepID returns a check that stores the ID of the connector in id.
+func keepID(id *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		*id = s.RootModule().Resources[connectorAddr].Primary.ID
+		return nil
+	}
+}
+
+// When the unshare of a narrowing is refused, no PATCH follows: the
+// connector keeps its old server, which the members of the scope the plan
+// removes could already use, and the state keeps its visibility. The next
+// apply unshares again before the PATCH.
+func TestConnectorResourceSendsNoContentWhenTheUnshareFails(t *testing.T) {
+	t.Parallel()
+	unshares := map[string]struct{ from, route string }{
+		"from shared_org":       {sharedOrg, routeUnshareOrg},
+		"from shared_workspace": {sharedWorkspace, routeUnshare},
+	}
+	for name, unshare := range unshares {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFake(t)
+			var id string
+
+			resource.UnitTest(t, resource.TestCase{
+				ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+				AdditionalCLIOptions:     noRefresh,
+				Steps: []resource.TestStep{
+					{Config: movedConnector(oldServer, unshare.from), Check: keepID(&id)},
+					{
+						PreConfig: func() { f.FailNextWith(unshare.route, 403, "Only the connector's creator can call this endpoint", 1) },
+						Config:    movedConnector(newServer, private),
+						ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*No\s+other\s+argument\s+was\s+sent:\s+the\s+connector\s+keeps\s+its\s+content,\s+with\s+the\s+visibility\s+` +
+							unshare.from + `(.|\n)*creator`),
+					},
+					{
+						PreConfig:         func() { f.expectConnector(t, id, oldServer, unshare.from) },
+						Config:            movedConnector(newServer, private),
+						ConfigPlanChecks:  expectUpdateFrom(unshare.from, oldServer),
+						ConfigStateChecks: expectMoved(private),
+					},
+				},
+			})
+			f.assertWrites(t, routeCreate, unshare.route, unshare.route, routeUpdate, routeDelete)
+		})
+	}
+}
+
+// A move from the organization to the workspace goes through private. When
+// its share fails, no PATCH follows either, and the state records the
+// connector as private with its old server: the next apply, a widening from
+// private, sends the PATCH, then the share.
+func TestConnectorResourceRecordsAHalfDoneNarrowing(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
-	private := strings.Replace(minimalConnector, `"shared_workspace"`, `"private"`, 1)
+	var id string
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
 		Steps: []resource.TestStep{
-			{Config: connectorConfig(minimalConnector)},
+			{Config: movedConnector(oldServer, sharedOrg), Check: keepID(&id)},
 			{
-				PreConfig:   func() { f.FailNextWith(routeUnshare, 403, "Only the connector's creator can call this endpoint", 1) },
-				Config:      connectorConfig(private),
-				ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*creator`),
+				PreConfig: func() {
+					f.FailNextWith(routeShare, 403, "Only the connector's creator can share it with the workspace", 1)
+				},
+				Config: movedConnector(newServer, sharedWorkspace),
+				ExpectError: regexp.MustCompile(
+					`Cannot\s+change\s+the\s+visibility(.|\n)*No\s+other\s+argument\s+was\s+sent:\s+the\s+connector\s+keeps\s+its\s+content,\s+with\s+the\s+visibility\s+private(.|\n)*creator`),
 			},
 			{
-				Config:           connectorConfig(private),
-				ConfigPlanChecks: providertest.ExpectAction(connectorAddr, plancheck.ResourceActionUpdate),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(connectorAddr, tfjsonpath.New("visibility"), knownvalue.StringExact("private")),
-				},
+				PreConfig:         func() { f.expectConnector(t, id, oldServer, private) },
+				Config:            movedConnector(newServer, sharedWorkspace),
+				ConfigPlanChecks:  expectUpdateFrom(private, oldServer),
+				ConfigStateChecks: expectMoved(sharedWorkspace),
 			},
 		},
 	})
-	f.assertWrites(t, routeCreate, routeUpdate, routeUnshare, routeUpdate, routeUnshare, routeDelete)
+	f.assertWrites(t, routeCreate, routeUnshareOrg, routeShare, routeUpdate, routeShare, routeDelete)
+}
+
+// When the PATCH fails after a narrowing, the state records the new
+// visibility with the old server, so that the next plan changes the server
+// alone, and the error says so. A key that does not see private connectors
+// answers 404 to the PATCH that follows a move to private: the error names
+// the access scope it lacks.
+func TestConnectorResourceRecordsANarrowingWhoseUpdateFailed(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, sharedWorkspace), Check: keepID(&id)},
+			{
+				PreConfig: func() { f.FailNextWith(routeUpdate, 404, "Connector not found", 1) },
+				Config:    movedConnector(newServer, private),
+				ExpectError: regexp.MustCompile(`Cannot\s+update\s+the\s+connector(.|\n)*The\s+visibility\s+of\s+the\s+connector\s+is\s+already\s+private,\s+but\s+its\s+other\s+arguments\s+were\s+not\s+changed` +
+					`(.|\n)*404\s+Not\s+Found:\s+Connector\s+not\s+found(.|\n)*"Shared\s+connectors\s+only",\s+does\s+not\s+see\s+private\s+connectors`),
+			},
+			{
+				PreConfig:         func() { f.expectConnector(t, id, oldServer, private) },
+				Config:            movedConnector(newServer, private),
+				ConfigPlanChecks:  expectUpdateFrom(private, oldServer),
+				ConfigStateChecks: expectMoved(private),
+			},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUnshare, routeUpdate, routeUpdate, routeDelete)
+}
+
+// A widening sends the PATCH first. When its share fails, the error says the
+// new content is live with the visibility the connector kept, private here
+// since the move from the workspace to the organization unshares first, and
+// the state records that visibility with the new server.
+func TestConnectorResourceReportsTheContentAppliedBeforeAFailedShare(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, sharedWorkspace), Check: keepID(&id)},
+			{
+				PreConfig: func() {
+					f.FailNextWith(routeShareOrg, 403, "Only organization admins can share a connector with the organization", 1)
+				},
+				Config: movedConnector(newServer, sharedOrg),
+				ExpectError: regexp.MustCompile(
+					`Cannot\s+change\s+the\s+visibility(.|\n)*The\s+other\s+arguments\s+are\s+already\s+updated,\s+with\s+the\s+visibility\s+private(.|\n)*organization\s+admins`),
+			},
+			{
+				PreConfig:         func() { f.expectConnector(t, id, newServer, private) },
+				Config:            movedConnector(newServer, sharedOrg),
+				ConfigPlanChecks:  expectUpdateFrom(private, newServer),
+				ConfigStateChecks: expectMoved(sharedOrg),
+			},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUpdate, routeUnshare, routeShareOrg, routeUpdate, routeShareOrg, routeDelete)
+}
+
+// A connector Mistral publishes answers shared_global, a visibility no share
+// call leaves: it counts as the widest, so an update that changes its
+// server fails at the move, before any call, and never sends the PATCH.
+func TestConnectorResourceSendsNoContentToAConnectorSharedGlobally(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	id := f.seed(map[string]any{
+		"name": "deepwiki", "description": "Explores code repositories", "server": oldServer, "visibility": "shared_global",
+	})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{{
+			Config: movedConnector(newServer, sharedOrg) + `
+import {
+  to = mistral_connector.this
+  id = "` + id + `"
+}
+`,
+			ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*No\s+other\s+argument\s+was\s+sent(.|\n)*no\s+share\s+call\s+for\s+the\s+connector\s+visibility\s+"shared_global"`),
+		}},
+	})
+	f.AssertCalled(routeUpdate, 0)
+	f.assertWrites(t, routeDelete)
+}
+
+// When the read back after a successful widening fails, the state records
+// the visibility the share calls reached, with the content the PATCH
+// answered: the next plan, without a refresh, has nothing left to do.
+func TestConnectorResourceRecordsTheVisibilityAFailedReadBackFollows(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, private)},
+			{
+				PreConfig:   func() { f.FailNext(routeGet, 500, 4) },
+				Config:      movedConnector(newServer, sharedWorkspace),
+				ExpectError: regexp.MustCompile(`Cannot\s+read\s+the\s+connector(.|\n)*500`),
+			},
+			{Config: movedConnector(newServer, sharedWorkspace), PlanOnly: true},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUpdate, routeShare, routeDelete)
+}
+
+// The client retries an unshare like a read. When the first one takes
+// effect but its answer is lost, the replay fails on a connector already
+// private: the connector is read back, and the state and the error give
+// private, not the visibility the failed answers point to.
+func TestConnectorResourceReadsBackAnUnshareWhoseAnswerWasLost(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, sharedOrg), Check: keepID(&id)},
+			{
+				PreConfig: func() { f.loseNextAnswer(routeUnshareOrg) },
+				Config:    movedConnector(newServer, private),
+				ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*No\s+other\s+argument\s+was\s+sent:\s+the\s+connector\s+keeps\s+its\s+content,\s+with\s+the\s+visibility\s+private\.` +
+					`(.|\n)*The\s+connector\s+is\s+not\s+shared\s+this\s+way`),
+			},
+			{
+				PreConfig:         func() { f.expectConnector(t, id, oldServer, private) },
+				Config:            movedConnector(newServer, private),
+				ConfigPlanChecks:  expectUpdateFrom(private, oldServer),
+				ConfigStateChecks: expectMoved(private),
+			},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUnshareOrg, routeUnshareOrg, routeUpdate, routeDelete)
+}
+
+// The same for a share after the PATCH of a widening: its replay fails on a
+// connector already shared, and the read back gives the visibility it has,
+// so the error says the new content is live with the workspace, and the
+// next plan, without a refresh, has nothing left to do.
+func TestConnectorResourceReadsBackAShareWhoseAnswerWasLost(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, private)},
+			{
+				PreConfig: func() { f.loseNextAnswer(routeShare) },
+				Config:    movedConnector(newServer, sharedWorkspace),
+				ExpectError: regexp.MustCompile(`Cannot\s+change\s+the\s+visibility(.|\n)*The\s+other\s+arguments\s+are\s+already\s+updated,\s+with\s+the\s+visibility\s+shared_workspace:` +
+					`(.|\n)*Only\s+a\s+private\s+connector\s+can\s+be\s+shared`),
+			},
+			{Config: movedConnector(newServer, sharedWorkspace), PlanOnly: true},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUpdate, routeShare, routeShare, routeDelete)
+}
+
+// When the read back after a failed move fails too, the state keeps the
+// visibility the answers point to, and the error words it as a guess.
+func TestConnectorResourceHedgesAVisibilityItCannotReadBack(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		AdditionalCLIOptions:     noRefresh,
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, sharedWorkspace)},
+			{
+				PreConfig: func() {
+					f.FailNextWith(routeUnshare, 403, "Only the connector's creator can call this endpoint", 1)
+					f.FailNext(routeGet, 500, 4)
+				},
+				Config: movedConnector(newServer, private),
+				ExpectError: regexp.MustCompile(`No\s+other\s+argument\s+was\s+sent:\s+the\s+connector\s+keeps\s+its\s+content,\s+probably\s+with\s+the\s+visibility\s+shared_workspace\s+` +
+					`\(the\s+read\s+that\s+would\s+confirm\s+it\s+failed\s+too;\s+the\s+next\s+refresh\s+reads\s+the\s+actual\s+one\)(.|\n)*creator`),
+			},
+			{
+				Config:            movedConnector(newServer, private),
+				ConfigPlanChecks:  expectUpdateFrom(sharedWorkspace, oldServer),
+				ConfigStateChecks: expectMoved(private),
+			},
+		},
+	})
+	f.assertWrites(t, routeCreate, routeUnshare, routeUnshare, routeUpdate, routeDelete)
 }
 
 // A failing refresh and a failing delete are reported with the message of

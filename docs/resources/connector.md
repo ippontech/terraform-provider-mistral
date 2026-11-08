@@ -23,7 +23,16 @@ Manages a connector of the workspace of the standard API key (`api_key`): an MCP
 
 The argument is required, although the API defaults to `private`. An API key sees private connectors only when it has the `Private and shared connectors` access scope, and the default scope is `Shared connectors only`: with such a key, a private connector would disappear from Terraform after its creation. Use `shared_workspace` for automation.
 
-The create sends the visibility. A change goes through the share calls of the API, which only take a private connector: from `shared_workspace` to `shared_org`, the provider first makes the connector private, then shares it with the organization. When a connector stops being shared with the workspace or the organization, the API removes the credentials of that scope, except its creator's: the next plan then recreates the `mistral_connector_credential` resources of that scope. Only the creator of the connector can share it with the workspace.
+The create sends the visibility. A change goes through the share calls of the API, which only take a private connector: from `shared_workspace` to `shared_org`, and back, the provider first makes the connector private, then shares it with the other scope. When a connector stops being shared with the workspace or the organization, the API removes the credentials of that scope, except its creator's: the next plan then recreates the `mistral_connector_credential` resources of that scope. Only the creator of the connector can share it with the workspace.
+
+When an update changes the visibility and other arguments together, the provider orders the calls so that nobody sees values the configuration does not give them:
+
+- When the visibility narrows (from `shared_org` to `shared_workspace` or `private`, or from `shared_workspace` to `private`), the provider changes it first, and updates the other arguments only once that succeeded. If the share calls fail, the other arguments do not change. A move from `shared_org` to `shared_workspace` whose share fails after the unshare leaves the connector `private`, without the credentials of the organization scope: the next apply updates the other arguments, then shares it with the workspace. If the update fails after the share calls, the visibility is already the new one, and the next plan shows the other arguments alone. An API key with the default access scope does not see a connector that became private, so its update can then fail with a 404.
+- Otherwise, the provider updates the other arguments first, then changes the visibility. If the share calls fail, the error says which visibility the connector kept with its new arguments.
+
+After a failed share call, the provider reads the connector back and records the visibility it has: a call whose answer was lost may have taken effect before its retry failed. When that read fails too, the error gives the visibility as a guess, which the next refresh corrects.
+
+A connector that Mistral publishes to everyone reads `shared_global`. No share call changes that visibility, so the provider refuses to update such a connector rather than send it new arguments.
 
 ## Updates and replacements
 
