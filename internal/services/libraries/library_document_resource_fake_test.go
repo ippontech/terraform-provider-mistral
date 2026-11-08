@@ -4,6 +4,7 @@
 package libraries_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -570,4 +571,56 @@ source = "` + guide + `"
 		})
 	}
 	f.AssertCalled("", 0)
+}
+
+// beforeApply is a plan check that runs between the plan and the apply of a
+// step. plugin-testing applies the saved plan, which reads nothing first, as
+// a plan reviewed in CI and applied later would: what the function changes
+// is what the apply meets.
+type beforeApply func()
+
+// CheckPlan runs the function.
+func (do beforeApply) CheckPlan(context.Context, plancheck.CheckPlanRequest, *plancheck.CheckPlanResponse) {
+	do()
+}
+
+// Removing name renames the document back to the file name of source, a
+// change that nameFromSource plans alone, after the framework has marked the
+// computed attributes unknown. The library may process the document again
+// between the plan and the apply, and the answer of the PATCH then carries a
+// new process_status and last_processed_at: the plan must leave both
+// unknown, or the apply fails with "Provider produced inconsistent result".
+func TestLibraryDocumentResourceRenamesBackWhileTheLibraryProcesses(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	guide := writeFile(t, "guide.pdf", "%PDF-1.7")
+	var libraryID, documentID string
+	reprocess := beforeApply(func() {
+		f.documents.Patch(documentID, map[string]any{"process_status": "in_progress", "last_processed_at": "2026-12-01T10:00:00Z"})
+	})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{
+				Config: documentConfig(`  source = "` + guide + `"
+  name   = "handbook.pdf"`),
+				Check: documentIDs(&libraryID, &documentID),
+			},
+			{
+				Config: documentConfig(`  source = "` + guide + `"`),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction(documentAddr, plancheck.ResourceActionUpdate),
+					plancheck.ExpectUnknownValue(documentAddr, tfjsonpath.New("process_status")),
+					plancheck.ExpectUnknownValue(documentAddr, tfjsonpath.New("last_processed_at")),
+					reprocess,
+				}},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(documentAddr, tfjsonpath.New("name"), knownvalue.StringExact("guide.pdf")),
+					statecheck.ExpectKnownValue(documentAddr, tfjsonpath.New("process_status"), knownvalue.StringExact("in_progress")),
+					statecheck.ExpectKnownValue(documentAddr, tfjsonpath.New("last_processed_at"), knownvalue.StringExact("2026-12-01T10:00:00Z")),
+				},
+			},
+		},
+	})
 }
