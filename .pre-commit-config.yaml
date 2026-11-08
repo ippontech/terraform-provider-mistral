@@ -3,9 +3,13 @@
 # format that the release notes group by (CONTRIBUTING.md, Conventional Commits).
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
+# Each remote hook is pinned to the commit of its tag, which a moved tag
+# cannot change, with the tag in a `# frozen:` comment: the format of
+# `pre-commit autoupdate --freeze`, which Renovate keeps when it bumps a
+# frozen rev (it cannot freeze a rev pinned by tag).
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: check-yaml
       - id: end-of-file-fixer
@@ -22,7 +26,7 @@ repos:
         entry: tools/conventional-commits.sh message
         stages: [commit-msg]
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.12
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
     hooks:
       - id: actionlint
   - repo: local
