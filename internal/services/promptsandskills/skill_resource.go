@@ -213,9 +213,11 @@ func (r *SkillResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	id, version := state.ID.ValueString(), state.Version.ValueInt64()
 	s := versionedUpdate[client.Skill]{
-		noun:    "skill",
-		changes: changes,
-		version: version,
+		noun:           "skill",
+		parentFields:   "the sharing of the skill",
+		changes:        changes,
+		narrowsSharing: narrowsSharing(plan.SharingScope, plan.WorkspaceRelation, state.SharingScope, state.WorkspaceRelation),
+		version:        version,
 		newVersion: func(ctx context.Context) (*client.CreatedVersion, error) {
 			return r.client.CreateSkillVersion(ctx, id, client.SkillVersionRequest{Definition: plan.definition(), Notes: plan.Notes.ValueStringPointer()})
 		},

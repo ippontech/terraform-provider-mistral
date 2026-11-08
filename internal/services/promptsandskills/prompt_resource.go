@@ -196,9 +196,11 @@ func (r *PromptResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	id, version := state.ID.ValueString(), state.Version.ValueInt64()
 	p := versionedUpdate[client.Prompt]{
-		noun:    "prompt",
-		changes: changes,
-		version: version,
+		noun:           "prompt",
+		parentFields:   "the title, description and sharing of the prompt",
+		changes:        changes,
+		narrowsSharing: narrowsSharing(plan.SharingScope, plan.WorkspaceRelation, state.SharingScope, state.WorkspaceRelation),
+		version:        version,
 		newVersion: func(ctx context.Context) (*client.CreatedVersion, error) {
 			return r.client.CreatePromptVersion(ctx, id, client.PromptVersionRequest{Definition: plan.definition(), Notes: plan.Notes.ValueStringPointer()})
 		},

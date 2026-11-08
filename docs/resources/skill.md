@@ -15,7 +15,7 @@ Manages a skill of the workspace of the standard API key (`api_key`): versioned 
 
 ## Versions
 
-A change of `description`, `body` or `assets` creates a new version of the skill, which becomes its latest version; `version` gives its number. Any other change creates no version: a change of the sharing settings updates the skill, and a change of `notes` alone updates the notes of the latest version. When one apply does both, the version comes first.
+A change of `description`, `body` or `assets` creates a new version of the skill, which becomes its latest version; `version` gives its number. Any other change creates no version: a change of the sharing settings updates the skill, and a change of `notes` alone updates the notes of the latest version. When one apply does both, the version comes first, unless the apply narrows the sharing, from `workspace` to `private` or from `writer` to `reader`: the skill is then updated first, so that the new version does not reach the members the configuration excludes, and if that update fails no version is created. An apply that fails partway says in its error what it already applied, and the next plan holds what is left.
 
 Mistral keeps every version and none can be deleted: destroying the resource deletes the skill with all its versions. A version created in Studio shows as drift on the next plan, and the apply writes the configuration back as one more version.
 
@@ -31,7 +31,7 @@ The API cannot rename a skill: changing `name` replaces it. The new skill starts
 
 ## Sharing
 
-`sharing_scope` defaults to `private`. With `workspace`, `workspace_relation` sets the access of the members of the workspace, `writer` by default. The API does not return `workspace_relation`: the state keeps the configured value, a change made in Studio does not show as drift, and an import leaves it unset, so the first apply after an import sets it.
+`sharing_scope` defaults to `private`. With `workspace`, `workspace_relation` sets the access of the members of the workspace, `writer` by default. The API does not return `workspace_relation`: the state keeps the configured value, a change made in Studio does not show as drift, and an import leaves it unset, so the first apply after an import sets it. For the same reason, after an apply that changed it and then failed, the next plan shows it again and sends it again, which changes nothing.
 
 ## Not managed yet
 

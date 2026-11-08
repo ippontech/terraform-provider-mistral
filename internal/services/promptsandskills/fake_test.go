@@ -384,6 +384,37 @@ func (k *kind) addVersion(id string, definition map[string]any, notes string) {
 	k.objects.Put(obj)
 }
 
+// assertWrites fails the test unless the fake received exactly these writes,
+// every request but the reads, in this order: the order of the calls of an
+// update.
+func (f *fake) assertWrites(want ...string) {
+	f.t.Helper()
+	var got []string
+	for _, r := range f.Requests("") {
+		if r.Method != http.MethodGet {
+			got = append(got, r.Route)
+		}
+	}
+	if !slices.Equal(got, want) {
+		f.t.Errorf("writes:\n  got  %q\n  want %q", got, want)
+	}
+}
+
+// assertLatest fails the test unless the object holds n versions, the latest
+// one with definition, compared as an answer would show it.
+func (k *kind) assertLatest(id string, n int, definition map[string]any) {
+	k.f.t.Helper()
+	obj, ok := k.objects.Get(id)
+	if !ok {
+		k.f.t.Fatalf("fake: no object %s", id)
+	}
+	all := versions(obj)
+	latest := all[len(all)-1].(map[string]any)["definition"]
+	if len(all) != n || !sameDefinition(latest, definition) {
+		k.f.t.Errorf("fake: %s holds %d versions, the latest with %v; want %d, the latest with %v", id, len(all), latest, n, definition)
+	}
+}
+
 // latest returns the latest version of a stored object, for assertions.
 func (k *kind) latest(id string) map[string]any {
 	obj, ok := k.objects.Get(id)
