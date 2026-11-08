@@ -588,15 +588,16 @@ func (do beforeApply) CheckPlan(context.Context, plancheck.CheckPlanRequest, *pl
 // change that nameFromSource plans alone, after the framework has marked the
 // computed attributes unknown. The library may process the document again
 // between the plan and the apply, and the answer of the PATCH then carries a
-// new process_status and last_processed_at: the plan must leave both
-// unknown, or the apply fails with "Provider produced inconsistent result".
+// new process_status, last_processed_at and number_of_pages: the plan must
+// leave the three unknown, or the apply fails with "Provider produced
+// inconsistent result".
 func TestLibraryDocumentResourceRenamesBackWhileTheLibraryProcesses(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
 	guide := writeFile(t, "guide.pdf", "%PDF-1.7")
 	var libraryID, documentID string
 	reprocess := beforeApply(func() {
-		f.documents.Patch(documentID, map[string]any{"process_status": "in_progress", "last_processed_at": "2026-12-01T10:00:00Z"})
+		f.documents.Patch(documentID, map[string]any{"process_status": "in_progress", "last_processed_at": "2026-12-01T10:00:00Z", "number_of_pages": 3})
 	})
 
 	resource.UnitTest(t, resource.TestCase{
@@ -613,12 +614,14 @@ func TestLibraryDocumentResourceRenamesBackWhileTheLibraryProcesses(t *testing.T
 					plancheck.ExpectResourceAction(documentAddr, plancheck.ResourceActionUpdate),
 					plancheck.ExpectUnknownValue(documentAddr, tfjsonpath.New("process_status")),
 					plancheck.ExpectUnknownValue(documentAddr, tfjsonpath.New("last_processed_at")),
+					plancheck.ExpectUnknownValue(documentAddr, tfjsonpath.New("number_of_pages")),
 					reprocess,
 				}},
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(documentAddr, tfjsonpath.New("name"), knownvalue.StringExact("guide.pdf")),
 					statecheck.ExpectKnownValue(documentAddr, tfjsonpath.New("process_status"), knownvalue.StringExact("in_progress")),
 					statecheck.ExpectKnownValue(documentAddr, tfjsonpath.New("last_processed_at"), knownvalue.StringExact("2026-12-01T10:00:00Z")),
+					statecheck.ExpectKnownValue(documentAddr, tfjsonpath.New("number_of_pages"), knownvalue.Int64Exact(3)),
 				},
 			},
 		},

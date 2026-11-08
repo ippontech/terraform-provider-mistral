@@ -211,14 +211,16 @@ func (r *LibraryDocumentResource) ModifyPlan(ctx context.Context, req resource.M
 	refusePastExpiry(ctx, req, resp)
 }
 
-// planProcessing plans process_status and last_processed_at unknown when the
-// plan changes the document. The library may process the document again
-// between the plan and the apply, and Update writes both from the answer of
-// the PATCH or of the read. The framework marks them unknown only when the
+// planProcessing plans what the processing sets, process_status,
+// last_processed_at and number_of_pages, unknown when the plan changes the
+// document. The library may process the document again, or finish a
+// processing still running at an import, between the plan and the apply, and
+// Update writes all three from the answer of the PATCH or of the read. The framework marks them unknown only when the
 // proposed new state differs from the prior one, which it checks before the
 // plan modifiers run: a rename that nameFromSource plans alone, when the
-// configuration drops name, would otherwise keep them known at their prior
-// values and fail the apply with "Provider produced inconsistent result". A
+// configuration drops name, would otherwise keep the first two known at their
+// prior values, and UseStateForUnknown keeps number_of_pages in every case:
+// the apply would fail with "Provider produced inconsistent result". A
 // create, whose prior state is null, plans them unknown already.
 func planProcessing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if resp.Plan.Raw.Equal(req.State.Raw) {
@@ -227,6 +229,7 @@ func planProcessing(ctx context.Context, req resource.ModifyPlanRequest, resp *r
 	for _, name := range []string{"process_status", "last_processed_at"} {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(name), types.StringUnknown())...)
 	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("number_of_pages"), types.Int64Unknown())...)
 }
 
 // refusePastExpiry refuses an expiry in the past when it would take effect:
