@@ -171,11 +171,12 @@ func TestConnectorResourceLifecycle(t *testing.T) {
 
 	f.AssertJSONBodies(routeCreate, createBody)
 	f.AssertJSONBodies(routeUpdate, fullBody, trimmedBody, minimalBody)
-	// A shared connector goes back to private before it is shared again.
+	// A shared connector goes back to private before it is shared again. The
+	// widenings send the PATCH first, the move to private sends it last.
 	f.assertWrites(t,
 		routeCreate,
 		routeUpdate, routeUnshare, routeShareOrg,
-		routeUpdate, routeUnshareOrg,
+		routeUnshareOrg, routeUpdate,
 		routeUpdate, routeShare,
 		routeDelete)
 	f.AssertCredential("", sdktest.APIKey)
@@ -384,5 +385,94 @@ func TestConnectorResourceTakesAConnectorNamedWithItsIDForGone(t *testing.T) {
 	f.AssertCalled(routeUpdate, 0)
 	if c, ok := f.connectors.Get(squatter); !ok || c["name"] != id {
 		t.Errorf("the other connector is %v, want it unchanged", c)
+	}
+}
+
+// The two servers of the tests that change the content and the visibility
+// together.
+const (
+	oldServer = "https://mcp.deepwiki.com/mcp"
+	newServer = "https://mcp.deepwiki.com/sse"
+)
+
+// movedConnector is minimalConnector with the server and the visibility
+// given.
+func movedConnector(server, visibility string) string {
+	return connectorConfig(fmt.Sprintf(`
+  name        = "deepwiki"
+  description = "Explores code repositories"
+  server      = %q
+  visibility  = %q
+`, server, visibility))
+}
+
+// visibilityMove is an update that changes the server and moves the
+// visibility, with the share calls the move takes.
+type visibilityMove struct {
+	from, to string
+	calls    []string
+}
+
+// applyMove creates the connector with the old server and the visibility
+// from, applies the new server with the visibility to, and returns the fake.
+func applyMove(t *testing.T, move visibilityMove) *fake {
+	t.Helper()
+	f := newFake(t)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: movedConnector(oldServer, move.from)},
+			{
+				Config:           movedConnector(newServer, move.to),
+				ConfigPlanChecks: providertest.ExpectAction(connectorAddr, plancheck.ResourceActionUpdate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(connectorAddr, tfjsonpath.New("server"), knownvalue.StringExact(newServer)),
+					statecheck.ExpectKnownValue(connectorAddr, tfjsonpath.New("visibility"), knownvalue.StringExact(move.to)),
+					statecheck.ExpectKnownValue(connectorAddr, tfjsonpath.New("modified_at"), knownvalue.StringExact(at(2))),
+				},
+			},
+		},
+	})
+	return f
+}
+
+// An update that narrows the visibility moves it before the PATCH, so that
+// the members it removes never see the new server: from the organization or
+// the workspace to private, and from the organization to the workspace
+// through private.
+func TestConnectorResourceNarrowsTheVisibilityBeforeTheContent(t *testing.T) {
+	t.Parallel()
+	moves := map[string]visibilityMove{
+		"shared_org to private":          {sharedOrg, private, []string{routeUnshareOrg}},
+		"shared_workspace to private":    {sharedWorkspace, private, []string{routeUnshare}},
+		"shared_org to shared_workspace": {sharedOrg, sharedWorkspace, []string{routeUnshareOrg, routeShare}},
+	}
+	for name, move := range moves {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := applyMove(t, move)
+			f.assertWrites(t, slices.Concat([]string{routeCreate}, move.calls, []string{routeUpdate, routeDelete})...)
+		})
+	}
+}
+
+// An update that widens the visibility, or keeps it, sends the PATCH first,
+// so that the members a widening adds never see the old server; a move from
+// the workspace to the organization goes through private.
+func TestConnectorResourceWidensTheVisibilityAfterTheContent(t *testing.T) {
+	t.Parallel()
+	moves := map[string]visibilityMove{
+		"private to shared_workspace":    {private, sharedWorkspace, []string{routeShare}},
+		"private to shared_org":          {private, sharedOrg, []string{routeShareOrg}},
+		"shared_workspace to shared_org": {sharedWorkspace, sharedOrg, []string{routeUnshare, routeShareOrg}},
+		"shared_workspace kept":          {sharedWorkspace, sharedWorkspace, nil},
+		"shared_org kept":                {sharedOrg, sharedOrg, nil},
+	}
+	for name, move := range moves {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := applyMove(t, move)
+			f.assertWrites(t, slices.Concat([]string{routeCreate, routeUpdate}, move.calls, []string{routeDelete})...)
+		})
 	}
 }
