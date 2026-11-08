@@ -516,9 +516,10 @@ func TestSkillResourceCreatesNoVersionWhenNarrowingTheSharingFails(t *testing.T)
 }
 
 // When the version fails after the update that makes the workspace readers,
-// the state keeps writer, which no answer corrects: the next apply sends the
-// same update again, then the version.
-func TestSkillResourceSendsTheRelationAgainAfterAFailedVersion(t *testing.T) {
+// the state records reader, which no answer holds. A configuration set back
+// to writers and to the earlier body then plans the update of the skill and
+// sends writer, instead of planning nothing while the API keeps reader.
+func TestSkillResourceRecordsTheRelationOfAnUpdateBeforeAFailedVersion(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)
 
@@ -533,11 +534,13 @@ func TestSkillResourceSendsTheRelationAgainAfterAFailedVersion(t *testing.T) {
 					`Already\s+applied:\s+the\s+sharing\s+of\s+the\s+skill\.`),
 			},
 			{
-				Config:           skillConfig(reSharedSkill),
-				ConfigPlanChecks: expectNewVersion(skillAddr),
+				Config:           skillConfig(sharedSkill),
+				ConfigPlanChecks: expectSameVersion(skillAddr, 1),
 				ConfigStateChecks: stateIs(skillAddr, map[string]knownvalue.Check{
-					"version":            knownvalue.Int64Exact(2),
-					"workspace_relation": knownvalue.StringExact("reader"),
+					"version":            knownvalue.Int64Exact(1),
+					"body":               knownvalue.StringExact("Extract the totals of the invoice."),
+					"sharing_scope":      knownvalue.StringExact("workspace"),
+					"workspace_relation": knownvalue.StringExact("writer"),
 				}),
 			},
 		},
@@ -545,9 +548,9 @@ func TestSkillResourceSendsTheRelationAgainAfterAFailedVersion(t *testing.T) {
 
 	f.assertWrites(routeSkillCreate,
 		routeSkillUpdate, routeSkillVersion,
-		routeSkillUpdate, routeSkillVersion,
+		routeSkillUpdate,
 		routeSkillDelete)
 	f.AssertJSONBodies(routeSkillUpdate,
 		`{"sharingScope": "workspace", "workspaceRelation": "reader"}`,
-		`{"sharingScope": "workspace", "workspaceRelation": "reader"}`)
+		`{"sharingScope": "workspace", "workspaceRelation": "writer"}`)
 }

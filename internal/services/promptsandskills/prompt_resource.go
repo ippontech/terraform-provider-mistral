@@ -29,6 +29,7 @@ var (
 	_ resource.ResourceWithImportState    = &PromptResource{}
 	_ resource.ResourceWithIdentity       = &PromptResource{}
 	_ resource.ResourceWithValidateConfig = &PromptResource{}
+	_ resource.ResourceWithModifyPlan     = &PromptResource{}
 )
 
 // NewPromptResource returns the mistral_prompt resource.
@@ -148,6 +149,12 @@ func (r *PromptResource) ValidateConfig(ctx context.Context, req resource.Valida
 	validateSharing(ctx, req.Config, &resp.Diagnostics)
 }
 
+// ModifyPlan plans updated_at as unknown when the plan changes the prompt
+// (planUpdatedAt).
+func (r *PromptResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	planUpdatedAt(ctx, req, resp)
+}
+
 // Create creates the prompt with its first version.
 func (r *PromptResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan promptModel
@@ -209,6 +216,9 @@ func (r *PromptResource) Update(ctx context.Context, req resource.UpdateRequest,
 		},
 		updateParent: func(ctx context.Context) (*client.Prompt, error) {
 			return r.client.UpdatePrompt(ctx, id, plan.updateRequest())
+		},
+		recordParent: func(ctx context.Context) diag.Diagnostics {
+			return promptLayout.copyParent(ctx, req.Plan, &resp.State)
 		},
 		get:       func(ctx context.Context) (*client.Prompt, error) { return r.client.GetPrompt(ctx, id) },
 		versionOf: func(p *client.Prompt) int64 { return p.Version },

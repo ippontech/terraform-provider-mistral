@@ -144,6 +144,86 @@ func TestPromptResourceCreatesNoVersionWhenNarrowingTheSharingFails(t *testing.T
 		routePromptDelete)
 }
 
+// When the version fails after the update that makes the workspace readers,
+// the state records reader, which no answer holds. A configuration set back
+// to writers and to the earlier template then plans the update of the prompt
+// and sends writer, instead of planning nothing while the API keeps reader.
+func TestPromptResourceRecordsTheRelationOfAnUpdateBeforeAFailedVersion(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: promptConfig(sharedPrompt)},
+			{
+				PreConfig: func() { f.FailNextWith(routePromptVersion, 400, "Content refused", 1) },
+				Config:    promptConfig(readOnlyPrompt),
+				ExpectError: regexp.MustCompile(`Cannot\s+create\s+a\s+version\s+of\s+the\s+prompt(.|\n)*Content\s+refused(.|\n)*` +
+					`Already\s+applied:\s+the\s+title,\s+description\s+and\s+sharing\s+of\s+the\s+prompt\.`),
+			},
+			{
+				Config:           promptConfig(sharedPrompt),
+				ConfigPlanChecks: expectSameVersion(promptAddr, 1),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(1),
+					"content":            knownvalue.StringExact("You are a coding assistant."),
+					"sharing_scope":      knownvalue.StringExact("workspace"),
+					"workspace_relation": knownvalue.StringExact("writer"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routePromptCreate,
+		routePromptUpdate, routePromptVersion,
+		routePromptUpdate,
+		routePromptDelete)
+	f.AssertJSONBodies(routePromptUpdate,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "reader"}`,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "writer"}`)
+}
+
+// In the default order too, an update of the prompt that a later failure
+// follows is recorded: a widening to writers whose definition Mistral matches
+// to an earlier version fails after the update (notLatest), and a
+// configuration set back to readers then plans the update and sends reader.
+func TestPromptResourceRecordsTheRelationOfAnUpdateBeforeAVersionThatIsNotTheLatest(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	f.dedupAnyVersion = true
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: promptConfig(readerPrompt)},
+			{Config: promptConfig(readOnlyPrompt)},
+			{
+				Config: promptConfig(sharedPrompt),
+				ExpectError: regexp.MustCompile(`did\s+not\s+get\s+a\s+new\s+latest\s+version(.|\n)*` +
+					`Already\s+applied:\s+the\s+title,\s+description\s+and\s+sharing\s+of\s+the\s+prompt\.`),
+			},
+			{
+				Config:           promptConfig(readOnlyPrompt),
+				ConfigPlanChecks: expectSameVersion(promptAddr, 2),
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"version":            knownvalue.Int64Exact(2),
+					"workspace_relation": knownvalue.StringExact("reader"),
+				}),
+			},
+		},
+	})
+
+	f.assertWrites(routePromptCreate,
+		routePromptVersion,
+		routePromptVersion, routePromptUpdate,
+		routePromptUpdate,
+		routePromptDelete)
+	f.AssertJSONBodies(routePromptUpdate,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "writer"}`,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "reader"}`)
+}
+
 // A name already taken points to an import block rather than adopting the
 // prompt.
 func TestPromptResourcePointsToAnImportWhenTheNameIsTaken(t *testing.T) {

@@ -31,7 +31,7 @@ The API cannot rename a skill: changing `name` replaces it. The new skill starts
 
 ## Sharing
 
-`sharing_scope` defaults to `private`. With `workspace`, `workspace_relation` sets the access of the members of the workspace, `writer` by default. The API does not return `workspace_relation`: the state keeps the configured value, a change made in Studio does not show as drift, and an import leaves it unset, so the first apply after an import sets it. For the same reason, after an apply that changed it and then failed, the next plan shows it again and sends it again, which changes nothing.
+`sharing_scope` defaults to `private`. With `workspace`, `workspace_relation` sets the access of the members of the workspace, `writer` by default. The API does not return `workspace_relation`: the state keeps the configured value, a change made in Studio does not show as drift, and an import leaves it unset, so the first apply after an import sets it. For the same reason, an apply that fails after it updated the sharing still records the new `workspace_relation` in the state.
 
 ## Not managed yet
 

@@ -363,7 +363,42 @@ const (
   content       = "You are a shared coding assistant."
   sharing_scope = "workspace"
 `
+	// readerPrompt is sharedPrompt with the workspace as readers.
+	readerPrompt = `
+  name               = "coding-assistant"
+  content            = "You are a coding assistant."
+  sharing_scope      = "workspace"
+  workspace_relation = "reader"
+`
 )
+
+// A configuration that drops workspace_relation = "reader" plans writer, the
+// default, and nothing else: the update of the prompt sends it, and
+// updated_at is unknown in the plan, since the update changes it.
+func TestPromptResourcePlansTheDefaultRelationAsAnUpdate(t *testing.T) {
+	t.Parallel()
+	f := newFake(t)
+	checks := expectSameVersion(promptAddr, 1)
+	checks.PreApply = append(checks.PreApply, plancheck.ExpectUnknownValue(promptAddr, tfjsonpath.New("updated_at")))
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(f.Server),
+		Steps: []resource.TestStep{
+			{Config: promptConfig(readerPrompt)},
+			{
+				Config:           promptConfig(sharedPrompt),
+				ConfigPlanChecks: checks,
+				ConfigStateChecks: stateIs(promptAddr, map[string]knownvalue.Check{
+					"workspace_relation": knownvalue.StringExact("writer"),
+					"updated_at":         knownvalue.StringExact(at(2)),
+				}),
+			},
+		},
+	})
+
+	f.AssertJSONBodies(routePromptUpdate,
+		`{"title": "", "description": "", "sharingScope": "workspace", "workspaceRelation": "writer"}`)
+}
 
 // An apply that changes the template and narrows the sharing updates the
 // prompt before it creates the version, so that the new template is never

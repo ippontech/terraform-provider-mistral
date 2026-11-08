@@ -45,6 +45,24 @@ func (l layout) changesOf(ctx context.Context, plan tfsdk.Plan, state tfsdk.Stat
 	return c, diags
 }
 
+// copyParent writes the parent attributes of the plan into state, which holds
+// the prior state during an Update, and leaves the others as they are. Update
+// calls it through versionedUpdate.recordParent once the update of the parent
+// succeeded, so that the state an error leaves holds what the API then has:
+// workspace_relation above all, which no answer holds and a refresh keeps
+// from the state. The plan values are known at apply time: each parent
+// attribute is configured, or planned from the configuration
+// (relationDefault, the default of sharing_scope).
+func (l layout) copyParent(ctx context.Context, plan tfsdk.Plan, state *tfsdk.State) diag.Diagnostics {
+	var diags diag.Diagnostics
+	for _, p := range l.parent {
+		var planned attr.Value
+		diags.Append(plan.GetAttribute(ctx, p, &planned)...)
+		diags.Append(state.SetAttribute(ctx, p, planned)...)
+	}
+	return diags
+}
+
 // anyChanged reports whether the plan holds another value than the state at
 // one of paths. A value unknown in the plan counts as a change.
 func anyChanged(ctx context.Context, plan tfsdk.Plan, state tfsdk.State, paths []path.Path, diags *diag.Diagnostics) bool {
@@ -107,6 +125,10 @@ type versionedUpdate[T any] struct {
 	newVersion   func(context.Context) (*client.CreatedVersion, error)
 	setNotes     func(context.Context) (*T, error)
 	updateParent func(context.Context) (*T, error)
+	// recordParent writes into the state of the Update what updateParent
+	// applied (layout.copyParent). apply calls it as soon as updateParent
+	// succeeds.
+	recordParent func(context.Context) diag.Diagnostics
 	get          func(context.Context) (*T, error)
 	versionOf    func(*T) int64
 }
@@ -158,20 +180,27 @@ type updateProgress[T any] struct {
 // answer to POST .../versions does not hold, and the read must return that
 // version (notLatest).
 //
-// When a call fails, the state keeps its prior value (the framework starts
-// Update from it), the diagnostic names what the writes before it applied
-// and the writes not attempted, and the refresh of the next plan reads what
-// was applied: the plan then holds only what is left to do.
-// workspace_relation is the exception: the API does not return it, so after
-// an update of the parent followed by a failed call the state keeps the prior
-// relation, and the next apply sends the same update of the parent again,
-// which changes nothing.
+// When a call fails, the diagnostic names what the writes before it applied
+// and the writes not attempted, and the state keeps its prior value (the
+// framework starts Update from it), with one exception: a successful update
+// of the parent is written into it at once (recordParent), whatever fails
+// next. The refresh of the next plan reads the rest of what was applied, and
+// the plan then holds only what is left to do. The parent cannot wait for the
+// refresh: workspace_relation is in no answer, so a refresh keeps it from the
+// state, and a prior relation left there would hide the one the API now has.
+// A configuration set back to the prior relation would then plan no change.
 func (u versionedUpdate[T]) apply(ctx context.Context, diags *diag.Diagnostics) *T {
 	var p updateProgress[T]
 	writes := u.writes()
 	for i, w := range writes {
 		if summary, err := u.send(ctx, w, &p); err != nil {
 			diags.AddError(summary, err.Error()+u.progress(p.applied, writes[i+1:]))
+			return nil
+		}
+		if w != writeParent {
+			continue
+		}
+		if diags.Append(u.recordParent(ctx)...); diags.HasError() {
 			return nil
 		}
 	}

@@ -30,6 +30,7 @@ var (
 	_ resource.ResourceWithImportState    = &SkillResource{}
 	_ resource.ResourceWithIdentity       = &SkillResource{}
 	_ resource.ResourceWithValidateConfig = &SkillResource{}
+	_ resource.ResourceWithModifyPlan     = &SkillResource{}
 )
 
 // NewSkillResource returns the mistral_skill resource.
@@ -159,6 +160,12 @@ func (r *SkillResource) ValidateConfig(ctx context.Context, req resource.Validat
 	validateAssets(ctx, req.Config, &resp.Diagnostics)
 }
 
+// ModifyPlan plans updated_at as unknown when the plan changes the skill
+// (planUpdatedAt).
+func (r *SkillResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	planUpdatedAt(ctx, req, resp)
+}
+
 // Create creates the skill with its first version.
 func (r *SkillResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan skillModel
@@ -229,6 +236,9 @@ func (r *SkillResource) Update(ctx context.Context, req resource.UpdateRequest, 
 				SharingScope:      plan.SharingScope.ValueString(),
 				WorkspaceRelation: relationRequest(plan.SharingScope, plan.WorkspaceRelation),
 			})
+		},
+		recordParent: func(ctx context.Context) diag.Diagnostics {
+			return skillLayout.copyParent(ctx, req.Plan, &resp.State)
 		},
 		get:       func(ctx context.Context) (*client.Skill, error) { return r.client.GetSkill(ctx, id) },
 		versionOf: func(s *client.Skill) int64 { return s.Version },
