@@ -7,6 +7,7 @@ Terraform and OpenTofu provider for Mistral AI, in Go, on the Terraform Plugin F
 | Path | Role |
 |---|---|
 | `main.go` | Serves `registry.terraform.io/ippontech/mistral`. |
+| `xpprovider` | The only exported package: `New(version)` returns the provider for a Go program that runs it in process, such as an Upjet generated Crossplane provider. A public Go API: its signature changes only with a major version. |
 | `internal/provider` | Provider schema and `Configure`, and `registry.go`: every resource and data source factory, with its audience, its stability at Mistral and its live coverage. |
 | `internal/providerdata` | What `Configure` hands to the types: the resolved configuration and the API client. No import of `internal/provider`. |
 | `internal/client` | The hand-written HTTP client of the Mistral API: transport, authentication, retries, pagination, errors, and one file of typed calls per API area. No Terraform import. |
