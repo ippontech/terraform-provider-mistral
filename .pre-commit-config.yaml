@@ -16,9 +16,9 @@ repos:
       # bytes the tests compare: tools/coversummary/testdata/change.diff ends
       # a file name line with the tab git writes after a name holding a space.
       - id: end-of-file-fixer
-        exclude: ^docs/|/testdata/
+        exclude: ^docs/|(^|/)testdata/
       - id: trailing-whitespace
-        exclude: ^docs/|/testdata/
+        exclude: ^docs/|(^|/)testdata/
   # The same check as the Conventional Commits workflow: one script, so the
   # hook and CI cannot disagree.
   - repo: local
