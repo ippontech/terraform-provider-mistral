@@ -200,13 +200,42 @@ func (r *LibraryDocumentResource) Configure(_ context.Context, req resource.Conf
 	r.client = providerdata.Configure(req.ProviderData, providerdata.Workspace, &resp.Diagnostics)
 }
 
-// ModifyPlan refuses an expiry in the past when it would take effect: on a
-// create, or when expires_at changes. The API would delete the document
-// right after its upload, and the next plan would upload it again.
+// ModifyPlan plans the processing attributes of an update unknown
+// (planProcessing), and refuses an expiry in the past when it would take
+// effect (refusePastExpiry). A destroy plans nothing.
 func (r *LibraryDocumentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
 	}
+	planProcessing(ctx, req, resp)
+	refusePastExpiry(ctx, req, resp)
+}
+
+// planProcessing plans what the processing sets, process_status,
+// last_processed_at and number_of_pages, unknown when the plan changes the
+// document. The library may process the document again, or finish a
+// processing still running at an import, between the plan and the apply, and
+// Update writes all three from the answer of the PATCH or of the read. The framework marks them unknown only when the
+// proposed new state differs from the prior one, which it checks before the
+// plan modifiers run: a rename that nameFromSource plans alone, when the
+// configuration drops name, would otherwise keep the first two known at their
+// prior values, and UseStateForUnknown keeps number_of_pages in every case:
+// the apply would fail with "Provider produced inconsistent result". A
+// create, whose prior state is null, plans them unknown already.
+func planProcessing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if resp.Plan.Raw.Equal(req.State.Raw) {
+		return
+	}
+	for _, name := range []string{"process_status", "last_processed_at"} {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(name), types.StringUnknown())...)
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("number_of_pages"), types.Int64Unknown())...)
+}
+
+// refusePastExpiry refuses an expiry in the past when it would take effect:
+// on a create, or when expires_at changes. The API would delete the document
+// right after its upload, and the next plan would upload it again.
+func refusePastExpiry(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	var planned, prior types.String
 	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("expires_at"), &planned)...)
 	if !req.State.Raw.IsNull() {
