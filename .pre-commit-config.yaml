@@ -21,17 +21,28 @@ repos:
         language: script
         entry: tools/conventional-commits.sh message
         stages: [commit-msg]
-  - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.109.4
-    hooks:
-      - id: terraform_fmt
-      - id: terraform_tflint
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:
       - id: actionlint
   - repo: local
     hooks:
+      # Terraform and tflint at the versions of mise.toml, with the commands
+      # of CI (make terraform-fmt-check in terraform.yml, tflint in
+      # security.yml), over every module rather than the staged files only.
+      # fmt rewrites the files; the CI job checks them.
+      - id: terraform-fmt
+        name: terraform fmt
+        language: system
+        entry: mise exec -- terraform fmt -recursive
+        files: \.(tf|tfvars|hcl)$
+        pass_filenames: false
+      - id: tflint
+        name: tflint
+        language: system
+        entry: mise exec -- tflint --recursive --format compact
+        files: \.(tf|tfvars|hcl)$
+        pass_filenames: false
       - id: poutine
         name: poutine
         language: system

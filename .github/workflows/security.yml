@@ -197,9 +197,10 @@ jobs:
       # checksums.txt: both files come from the same source, so a compromised
       # release would poison the checksum along with the binary. Bump
       # TFLINT_VERSION and TFLINT_SHA256 together (value from the target
-      # release's checksums.txt, tflint_linux_amd64.zip line). Renovate only
-      # bumps the version, so its PR goes red here until the hash is updated
-      # by hand. No Renovate PR merges by itself: renovate.json sets
+      # release's checksums.txt, tflint_linux_amd64.zip line). mise.toml pins
+      # the same version for local runs, and Renovate bumps both in one pull
+      # request, but only the version: its PR goes red here until the hash is
+      # updated by hand. No Renovate PR merges by itself: renovate.json sets
       # "automerge": false for every update.
       - name: Install tflint
         env:
