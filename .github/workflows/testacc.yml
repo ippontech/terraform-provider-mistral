@@ -1,30 +1,66 @@
 name: Acceptance Tests
 
 # The acceptance tests (TF_ACC=1) and the live native tests, against a
-# dedicated Mistral organization: after every merge to main and on demand.
-# Never on a pull request: they create real objects with the keys of the
-# protected acctest environment. No schedule: spec-drift.yml watches every
-# week the contract of the operations the provider calls, and the fix of a
-# change it finds is a merge, which runs these tests. They run once the
-# repository variable MISTRAL_ACCTEST is "true", which is set when the test
-# organization exists; MISTRAL_ADMIN_API_KEY may stay empty, and the Admin
-# API tests then skip.
+# dedicated Mistral organization: after every merge to main (except the push
+# of a release commit, which changes nothing they cover), before each release
+# and on demand. Never on a pull request: they create real objects with the
+# keys of the protected acctest environment. A push runs them and stops
+# there: semantic-release.yml cuts the release once a week (RELEASE.md, How a
+# release is cut). No schedule: spec-drift.yml watches every week the
+# contract of the operations the provider calls, and the fix of a change it
+# finds is a merge, which runs these tests. They run once the repository
+# variable MISTRAL_ACCTEST is "true", which is set when the test organization
+# exists; MISTRAL_ADMIN_API_KEY may stay empty, and the Admin API tests then
+# skip.
 on:
   push:
     branches:
       - main
+  # Called by semantic-release.yml before each release, which is cut only when
+  # this job passes. The caller must pass each secret by name, even one that
+  # exists only in the acctest environment of the job below, which then
+  # receives that environment's value (GitHub docs, "Reuse workflows"). Not
+  # `required`: that only checks that the caller passes the secret, not its
+  # value (same page), and a missing key already fails the tests
+  # (acctest.PreCheck stops on an empty key).
+  workflow_call:
+    secrets:
+      MISTRAL_API_KEY:
+        required: false
+      MISTRAL_ADMIN_API_KEY:
+        required: false
   workflow_dispatch:
 
 permissions: {}
 
-# One run at a time against the test organization.
+# On a push or a manual run, the same group as the acceptance-tests job of
+# semantic-release.yml, so one live test run exists at a time: two would
+# collide in the test organization.
+# When several pushes queue up, only the newest waiting run starts. A called
+# run already sits in its caller's group: giving it the same one here would
+# queue it behind the caller that holds it (the GitHub docs warn of the
+# cancellation variant of this, "Reusing workflow configurations"), hence a
+# group of its own, its run id. The called run is told apart by
+# `github.workflow`, which then carries the caller's name (same page), where
+# `github.event_name` is `workflow_dispatch` for a manual run and for a run
+# called by a dispatched semantic-release.yml alike.
 concurrency:
-  group: acctest
+  group: ${{ github.workflow == 'Acceptance Tests' && 'acctest' || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   testacc:
-    if: vars.MISTRAL_ACCTEST == 'true'
+    # Skipped on the push of the release commit, told apart by its subject and
+    # by its content, CHANGELOG.md alone (.releaserc, the git plugin): a pull
+    # request titled chore(release) that changes code still gets its run. A
+    # called or manual run always goes on, when the variable allows.
+    if: >-
+      vars.MISTRAL_ACCTEST == 'true'
+      && !(github.event_name == 'push'
+        && startsWith(github.event.head_commit.message, 'chore(release):')
+        && join(github.event.head_commit.added) == ''
+        && join(github.event.head_commit.removed) == ''
+        && join(github.event.head_commit.modified) == 'CHANGELOG.md')
     runs-on: ubuntu-latest
     timeout-minutes: 130
     environment: acctest

@@ -33,3 +33,6 @@ coverage-diff.out
 .mcp.json
 .claude/settings.local.json
 .claude/worktrees/
+
+# The semantic-release toolchain, installed by npm ci (.github/semantic-release)
+node_modules/

@@ -19,7 +19,8 @@
     "gomod",
     "mise",
     "pre-commit",
-    "custom.regex"
+    "custom.regex",
+    "npm"
   ],
   "customManagers": [
     {
@@ -78,14 +79,30 @@
       "groupSlug": "ci-tools"
     },
     {
-      "description": "The release tooling (GoReleaser and the GPG import action) runs in the job that signs and publishes: a human reviews each bump, in a pull request of its own.",
+      "description": "The release tooling (GoReleaser and the GPG import action, in the job that signs and publishes; the Node setup and the App token action, in the job that holds the semantic-release App token) runs next to a release credential: a human reviews each bump, in a pull request of its own.",
       "matchPackageNames": [
         "goreleaser/goreleaser",
         "goreleaser/goreleaser-action",
-        "crazy-max/ghaction-import-gpg"
+        "crazy-max/ghaction-import-gpg",
+        "actions/setup-node",
+        "actions/create-github-app-token"
       ],
       "groupName": null,
       "labels": ["dependencies", "release-tooling"]
+    },
+    {
+      "description": "The semantic-release packages of .github/semantic-release/package.json run in the job that holds the App token, which bypasses the main ruleset: a human reviews each bump. One pull request for all of them, since the plugins move with semantic-release; the npm manager regenerates the lockfile in it. The commit type is forced to chore: the npm manager gives these packages the dependencies depType, which config:recommended would title fix(deps), and a fix title would cut a provider patch release for a tooling bump.",
+      "matchManagers": ["npm"],
+      "groupName": "semantic-release",
+      "groupSlug": "semantic-release",
+      "labels": ["dependencies", "release-tooling"],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "Hold conventional-changelog-conventionalcommits below 9: 10.x is written for conventional-changelog-writer 9, while the latest @semantic-release/release-notes-generator (14.1.1) pins writer ^8, so generateNotes fails with 'Missing helper' (found in ippontech/terraform-provider-anthropic). Lift once release-notes-generator ships with writer 9.",
+      "matchManagers": ["npm"],
+      "matchDepNames": ["conventional-changelog-conventionalcommits"],
+      "allowedVersions": "<9.0.0"
     },
     {
       "description": "A tool pinned in several files (mise.toml, a workflow, .pre-commit-config.yaml) is read by several managers, which the rules above put in different groups, so its pins drifted apart and two pull requests could edit the same line. Every manager reports the same packageName for it, so one group per packageName bumps all its pins in one pull request (and groupSlug, without the slash: an earlier rule's groupSlug would otherwise stay and put every tool in one branch). Last, so that it overrides the manager groups and the groupName null of the release tooling rule, whose labels GoReleaser keeps: GoReleaser still gets a pull request of its own. A workflow pin checked against a hash (gitleaks, poutine, tflint, zizmor) still needs the hash updated by hand.",

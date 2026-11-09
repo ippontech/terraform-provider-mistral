@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Checks messages against Conventional Commits, the format the release notes
-# group commits by (.goreleaser.yml, changelog) and the maintainer reads to
-# choose the next version (RELEASE.md).
+# Checks messages against Conventional Commits, the format semantic-release
+# reads to choose the next version and group the release notes (.releaserc,
+# RELEASE.md).
 #
 #   tools/conventional-commits.sh title             # TITLE: a PR title
 #   tools/conventional-commits.sh message <file>    # a commit message file (the commit-msg hook)
@@ -11,13 +11,18 @@
 # a rebase merge puts every commit of the branch there. Both are checked, with
 # the same rules:
 #
-# - the subject is "<type>[(scope)][!]: <subject>", or a "Revert "..."" subject;
+# - the subject is "<type>[(scope)][!]: <subject>", or, for a commit (not a PR
+#   title), a "Revert "..."" subject: git's own revert carries the
+#   "This reverts commit <sha>." line the release parser needs. A PR title may
+#   not be one: a squash merge replaces that line with the PR description, the
+#   parser sees no type and no revert, and the release is skipped. Use
+#   "revert: ..." instead;
 # - in a range, no merge commit: main has a linear history, and a branch
 #   catches up with a rebase.
 set -euo pipefail
 
 # The types of CONTRIBUTING.md. `feature`, an alias of some presets, is left
-# out: no group of the release notes matches it.
+# out: no release rule of .releaserc matches it.
 readonly types='feat|fix|perf|revert|docs|style|chore|refactor|test|build|ci'
 readonly subject_pattern="^(${types})(\([^()]+\))?(!)?: [^[:space:]]"
 
@@ -85,6 +90,9 @@ read_subject() {
 
 case "${1:-}" in
 title)
+	if [[ "${TITLE:-}" =~ ^Revert\ \" ]]; then
+		fail "PR title: '${TITLE}' is a Revert subject, which a squash merge leaves unrecognised by semantic-release (no release, no release note). Write 'revert: <subject>' instead."
+	fi
 	check "PR title" "${TITLE:?TITLE is not set}"
 	;;
 message)

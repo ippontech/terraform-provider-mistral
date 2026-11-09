@@ -1,0 +1,227 @@
+name: Semantic Release
+
+# Cuts one release a week from the head of main, on Monday morning, or on
+# demand (RELEASE.md, How a release is cut). The acceptance tests of every
+# push live in testacc.yml. A release on every push would cut one version per
+# merged pull request, each a changelog entry, a signing run to approve and a
+# registry ingestion for nothing a user needed separately: a weekly release
+# ships a week of merges as one version.
+on:
+  schedule:
+    # Monday, 07:23 UTC: 08:23 in Paris in winter, 09:23 in summer (GitHub
+    # schedules take UTC only; an off-the-hour minute, since GitHub drops
+    # scheduled runs under the load of the top of the hour). The second one is
+    # a retry: it releases only if the day still has no release, after a
+    # morning run that was dropped, cancelled while waiting behind a push run,
+    # or that found main moved during its tests (semantic-release then
+    # publishes nothing, and exits green).
+    - cron: '23 7 * * 1'
+    - cron: '23 12 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+# One release run at a time: a run started while another one is testing or
+# releasing (the 12:23 retry behind a morning run that waited for a push run,
+# a manual run) waits for it, then its pending job finds the tag that run cut,
+# or main moved, and stops. Without the group it would start the live suite at
+# once, for a release the first run cuts. The acceptance-tests job also joins
+# the acctest group of testacc.yml. GitHub keeps one waiting run per group: a
+# third run cancels the second, which the next schedule replaces.
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+
+jobs:
+  # Goes on only when a commit since the last tag would cut a version;
+  # otherwise the live test run would create objects in the test organization
+  # every Monday for a release that semantic-release would then decline to
+  # cut. The decision comes from semantic-release's own commit analyzer, run
+  # with the .releaserc configuration by next-release.mjs, so the two cannot
+  # drift apart (a `--dry-run` of semantic-release would need the App token:
+  # it checks that it may push before any plugin runs).
+  pending:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      # release-assets.githubusercontent.com: the Node archive of
+      # actions/node-versions, when the runner's toolcache lacks the version.
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the tags, and the commits since the newest one
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      # Same install as the release job below: the committed lockfile, no
+      # lifecycle script.
+      - name: Install semantic-release and plugins
+        working-directory: .github/semantic-release
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Check whether a commit since the last release tag cuts a version
+        id: check
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          set -euo pipefail
+          # Two lines on stdout, `last_tag=` and `release_type=`; the analysis
+          # log on stderr. Read from a variable with sed, not through a pipe
+          # into grep -q: under pipefail a reader that exits on its first
+          # match fails the pipeline when the writer still has output to send.
+          analysis=$(node .github/semantic-release/next-release.mjs)
+          last=$(sed -n 's/^last_tag=//p' <<< "${analysis}")
+          type=$(sed -n 's/^release_type=//p' <<< "${analysis}")
+          release=true
+          if [ "${type}" = none ]; then
+            release=false
+          fi
+          # main moved since this run was triggered: it waited for another
+          # release run (the concurrency group of the workflow), or a push
+          # landed meanwhile. semantic-release refuses to publish from a branch
+          # behind its remote and exits green, so stop here, before the live
+          # suite: the commits ship at the next run. The checkout fetched every
+          # branch and tag (fetch-depth 0), so origin/main is current.
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            release=false
+          fi
+          # The retry run never cuts a second version in a day. Every version
+          # tag counts, not only the newest one merged into HEAD: the tag of a
+          # morning release pushed after this run was triggered sits past HEAD,
+          # and the checkout fetched it all the same.
+          if [ "${SCHEDULE}" = "23 12 * * 1" ]; then
+            today=$(date -u +%F)
+            while read -r tag; do
+              if [ "$(git log -1 --format=%cs "${tag}")" = "${today}" ]; then
+                release=false
+              fi
+            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*')
+          fi
+          echo "release=${release}" >> "${GITHUB_OUTPUT}"
+          echo "Release type since ${last:-the first commit}: ${type}. Cut in this run: ${release}." >> "${GITHUB_STEP_SUMMARY}"
+
+  # Run again from the head of main, whatever the push runs found: the release
+  # waits for them, and a red run publishes nothing.
+  acceptance-tests:
+    needs: pending
+    if: needs.pending.outputs.release == 'true'
+    # Same group as the push runs of testacc.yml, so a release waits for a
+    # push run still testing (and the reverse): two live test runs at once
+    # would collide in the test organization. On this job, not the workflow:
+    # GitHub keeps one pending run per group, and a run that tests nothing
+    # (nothing to release, or the retry after a morning release) would
+    # otherwise cancel a push run waiting for its turn, whose merge would then
+    # get no live test.
+    concurrency:
+      group: acctest
+      cancel-in-progress: false
+    # `./`, this repository at this commit, rather than GitHub's `$/` form of
+    # the same reference that zizmor prefers (self-repository): actionlint
+    # v1.7.12 rejects the latter (workflow-call).
+    uses: ./.github/workflows/testacc.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+    # Passed by name, not with `secrets: inherit`: the values come from the
+    # acctest environment of the called job, and nothing else reaches them.
+    secrets:
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      MISTRAL_ADMIN_API_KEY: ${{ secrets.MISTRAL_ADMIN_API_KEY }}
+
+  # Releases every commit merged since the last tag as one version.
+  release:
+    needs: [pending, acceptance-tests]
+    # After a green acceptance run, or after none: testacc.yml skips its job
+    # while the repository variable MISTRAL_ACCTEST is not "true", since the
+    # test organization does not exist yet, and the alpha versions ship
+    # without live tests (RELEASE.md, Versions). `!cancelled()` lets this job
+    # start when the one it needs was skipped; the explicit results then
+    # refuse a failed or cancelled run.
+    if: ${{ !cancelled() && needs.pending.outputs.release == 'true' && contains(fromJSON('["success", "skipped"]'), needs.acceptance-tests.result) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The App ID and private key are secrets of this environment only, whose
+    # deployment policy admits main alone (RELEASE.md, Release security).
+    environment: semantic-release
+    # Every write (release commit, tag, GitHub release, issue and PR comments)
+    # goes through the App token below, so the job token only needs to read
+    # the repository.
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # No cache: this job holds the App token (RELEASE.md, Release security).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      # The whole tree, transitive packages included, comes from the committed
+      # lockfile with its integrity hashes, and no package lifecycle script
+      # runs (also enforced by the .npmrc there).
+      - name: Install semantic-release and plugins
+        working-directory: .github/semantic-release
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Minted only now, after the install, and handed to the publishing step
+      # alone: no code that runs while packages are installed can read it, and
+      # checkout did not persist it in git config.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.SEMREL_APP_ID }}
+          private-key: ${{ secrets.SEMREL_APP_PRIVATE_KEY }}
+          # Only what semantic-release uses: the release commit, the tag and
+          # the GitHub release (contents), the comments on released issues and
+          # pull requests (issues, pull-requests). Without these inputs the
+          # token inherits every permission of the App, including any granted
+          # later for another purpose.
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      # semantic-release authenticates its own git push with GITHUB_TOKEN
+      # (x-access-token URL). The tag it pushes starts goreleaser-release.yml:
+      # a push made with an App token triggers workflows, where one made with
+      # the job's own token would not.
+      - name: Run semantic-release
+        run: ./.github/semantic-release/node_modules/.bin/semantic-release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
