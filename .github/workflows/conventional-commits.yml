@@ -20,8 +20,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      # The checks make no network call besides the checkout and the download
-      # of svu.
+      # The checks make no network call besides the checkout.
       - name: Harden runner
         # Free for public repositories only: skipped while the repository is private.
         if: ${{ !github.event.repository.private }}
@@ -30,7 +29,6 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             github.com:443
-            release-assets.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,32 +38,6 @@ jobs:
         run: tools/conventional-commits_test.sh
 
       # The release version follows the same types (tools/release-version.sh).
-      # Same method as the tools of security.yml: the expected hash is pinned
-      # here, not read from the release's checksums.txt, which comes from the
-      # same source. It was checked against that checksums.txt, whose Sigstore
-      # bundle verifies against svu's release workflow, and against the build
-      # provenance of the archive (gh attestation verify --repo caarlos0/svu).
-      # The same pin is in conventional-commits.yml, goreleaser-release.yml and
-      # release-reminder.yml: Renovate bumps the three and mise.toml in one pull
-      # request, the version only, so it fails until the three hashes are
-      # updated by hand.
-      - name: Install svu
-        env:
-          # renovate: datasource=github-releases depName=caarlos0/svu
-          SVU_VERSION: v3.4.4
-          SVU_SHA256: f113776c1c4c2a2a3c6e27991efaa8071aafc1ec5644fa77ff809ec69aacd5da
-        run: |
-          set -euo pipefail
-          archive="${RUNNER_TEMP}/svu_linux_amd64.tar.gz"
-          curl -fsSL -o "${archive}" \
-            "https://github.com/caarlos0/svu/releases/download/${SVU_VERSION}/svu_${SVU_VERSION#v}_linux_amd64.tar.gz"
-          echo "${SVU_SHA256}  ${archive}" | sha256sum -c -
-          install_dir="${RUNNER_TEMP}/svu"
-          mkdir -p "${install_dir}"
-          tar xzf "${archive}" -C "${install_dir}" svu
-          echo "${install_dir}" >> "${GITHUB_PATH}"
-          "${install_dir}/svu" --version
-
       - name: Test the release version
         run: tools/release-version_test.sh
 

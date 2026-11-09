@@ -6,26 +6,30 @@ Nothing is released while the repository is private: the release job skips, sinc
 
 ## Cutting a release
 
-A release is a decision of a maintainer, who creates its tag by hand: no workflow, App or bot can create a version tag. Everything around that decision is automated:
+A release is a decision of a maintainer, who creates its tag: no workflow, App or bot can create a version tag. Everything around that decision is automated, as GoReleaser does for its own releases (a task that computes the next version, then asks for a confirmation before it tags):
 
-- the **Unreleased changes** issue, which `release-reminder.yml` keeps up to date on every push to `main` and every release tag, lists the commits that no release has published, grouped as the notes will be, and the version to tag next; it is how a fix waiting on `main` gets noticed. The workflow can write issues, and nothing else;
-- the version comes from the Conventional Commits since the last release tag (*Choosing the version* below);
-- the release job refuses a tag that is not that version, before the approval (*Release security*).
+- the **Unreleased changes** issue, which `release-reminder.yml` keeps up to date on every push to `main` and every release tag, lists the commits that no release has published, grouped as the notes will be, and the version to tag next; it is how a fix waiting on `main` gets noticed. The workflow can write issues, and nothing else, and updates only the issue its own bot opened;
+- the version comes from the Conventional Commits since the last published release (*Choosing the version* below);
+- the release job refuses, before the approval, a tag below that version or not above every other release tag (*Release security*).
 
 To release:
 
 1. Read the **Unreleased changes** issue, or `git log --oneline <last-tag>..origin/main`, and decide that `main` is worth releasing.
-2. Get the version: `make release-version` (*Choosing the version*).
-3. Tag the commit of `main` with that version and push the tag: `git tag -a v0.4.0 -m v0.4.0 <sha> && git push origin v0.4.0`. The tag ruleset lets repository admins only create a version tag, and nobody move or delete one.
-4. Approve the release job (*Approving a release* below), then check the GitHub release: its archives, `SHA256SUMS`, the signature and the notes.
+2. On an up-to-date, clean checkout of `main`, run `make release-tag`. It prints the version and the commit, waits for you to type that version, then tags the commit and pushes the tag. `make release-version` prints the version alone. To tag another version, such as 1.0.0, tag it by hand: `git tag -a v1.0.0 -m v1.0.0 <sha> && git push origin v1.0.0`. The tag ruleset lets repository admins only create a version tag, and nobody move or delete one.
+3. Approve the release job (*Approving a release* below), then check the GitHub release: its archives, `SHA256SUMS`, the signature and the notes.
 
 The release notes group the commits by type (`.goreleaser.yml`, `changelog`): breaking changes (`!` after the type), features, fixes, performance, reverts (GitHub's `Revert "..."` subjects and `revert:`), then the rest; `chore`, `ci`, `test` and `style` are left out, and so are their reverts. Every pull request checks the format (`conventional-commits.yml`), so a commit cannot land outside these groups. A tag with a pre-release suffix (`v1.0.0-rc.1`) publishes a GitHub pre-release; GoReleaser starts the notes of the next release at the nearest earlier tag, pre-releases included, so the notes of the stable release that follows one leave out what the pre-releases shipped: add those commits to them by hand.
 
 ## Choosing the version
 
-`make release-version` runs `tools/release-version.sh next`, which reads the commits since the last release tag of `HEAD` with [svu](https://github.com/caarlos0/svu) (pinned in `mise.toml`, with `--v0`) and applies the rules of *Versions* below. Run it on an up-to-date `main`. The first release is `v0.1.0`; a pre-release tag (`v0.2.0-rc.1`) is never the previous release, and is checked by its core version. The same script checks the tag in the release job (`check`) and writes the body of the **Unreleased changes** issue (`pending`); `tools/release-version_test.sh` tests the three, on every pull request.
+`tools/release-version.sh` computes the version from the subjects of the commits since the last published release, with the rules of *Versions* below; `tools/release-version_test.sh` tests it on every pull request.
 
-If the release job refuses a tag, nothing was approved, signed or published, but the tag stays: tag the version the error gives, on the same commit. The refused tag stays in the repository as a tag without a release.
+- **The last published release** is the latest GitHub release that is neither a draft nor a pre-release, which the script reads with `gh`. A tag whose release was refused, or stopped before publishing, publishes nothing: its commits stay pending, and the next version goes above it. Without `gh`, the last release tag stands for the last published release, with a warning.
+- **The subjects only.** Each rule matches the start of a subject: GitHub's `Revert "feat(...): ..."` is a revert, not a feature. Bodies are not read, so the upstream changelogs that Renovate quotes in its commits never count, and a breaking change is marked with `!` in the subject.
+- **The first release** is `v0.1.0`. A pre-release tag (`v0.2.0-rc.1`) is checked by its core version, and is never the last published release.
+- **The modes.** `next` (`make release-version`) prints the version, or fails when there is nothing to release; `tag` (`make release-tag`) tags and pushes it once confirmed; `check` runs in the release job; `pending` writes the body of the **Unreleased changes** issue.
+
+If the release job refuses a tag, nothing was approved, signed or published, but the tag stays: tag the version the error gives. The refused tag holds its number for good, and the next versions go above it.
 
 ## Approving a release
 
@@ -41,7 +45,7 @@ The release job waits in `Actions > GoReleaser Release`, on the run of the new t
 |---|---|---|
 | a breaking change (`feat!:`, `fix!:`) | minor | major |
 | a `feat` | minor | minor |
-| only `fix`, `perf`, `build`, `refactor`, `docs` | patch | patch |
+| only `fix`, `perf`, `build`, `refactor`, `docs`, `revert` and GitHub's `Revert "..."` | patch | patch |
 | only `chore`, `ci`, `test`, `style` | no release | no release |
 
 **The provider stays in 0.x until 1.0.0 is decided.** While in 0.x:
@@ -58,7 +62,7 @@ The release job holds the signing key. It follows the rules for privileged jobs 
 
 1. The secrets live in the protected `release` environment, not in repository secrets: `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, for GoReleaser.
 2. A ruleset protects the version tags (`.github/rulesets/version-tags.json`): only repository admins create them, and nobody updates or deletes them.
-3. Before the approval, the release job refuses a tag that is not the version the commits since the previous release call for (*Choosing the version*), so that no approver signs a wrong number. After it, the job refuses a tag whose commit is not on `main`, and stops before publishing anything if the imported key is not `08C47C742E19A68E`, the key of this provider (*Signing key*, and *Check the signing key* in the workflow): the version tag cannot be deleted, but with no GitHub release created yet, the failed jobs run again on the same tag once the secret is fixed. GoReleaser signs with that exact primary key (`!` after the fingerprint in `.goreleaser.yml`), never with a signing subkey the registries may not know. Rotating the key means registering the new one in both registries first, then changing the fingerprint of that step in a pull request before the next tag: a run reads the workflow as its tag holds it, so a rerun cannot pick up a new fingerprint.
+3. Before the approval, the release job refuses a tag below the version the commits since the last published release call for, or not above every other release tag (*Choosing the version*), so that no approver signs a wrong number. A higher number, such as 1.0.0, is a maintainer's choice and passes. After it, the job refuses a tag whose commit is not on `main`, and stops before publishing anything if the imported key is not `08C47C742E19A68E`, the key of this provider (*Signing key*, and *Check the signing key* in the workflow): the version tag cannot be deleted, but with no GitHub release created yet, the failed jobs run again on the same tag once the secret is fixed. GoReleaser signs with that exact primary key (`!` after the fingerprint in `.goreleaser.yml`), never with a signing subkey the registries may not know. Rotating the key means registering the new one in both registries first, then changing the fingerprint of that step in a pull request before the next tag: a run reads the workflow as its tag holds it, so a rerun cannot pick up a new fingerprint.
 4. No cache is restored or saved in the job that signs (`cache: false`). A tag run can restore the caches of `main`, so a cache written by any job on `main` could otherwise run code there. A pull request's cache is not the risk: only that pull request can restore it.
 5. Every checkout uses `persist-credentials: false`, and the modules are verified against `go.sum` before the build.
 6. A human reviews every bump of the release tooling (GoReleaser, the GPG import action). Renovate labels these pull requests `release-tooling` and never merges them automatically.
