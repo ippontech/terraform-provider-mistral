@@ -29,10 +29,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Runs before the approval that releases the GPG key, with no secret: it
-  # writes on the run's summary page the go.mod lines that changed since the
-  # previous release tag, which the approver checks (RELEASE.md, Approving a
-  # release). go.mod lists every module compiled into the provider.
+  # Runs before the approval that releases the GPG key, with no secret. It
+  # stops the run when the tag is not the version the Conventional Commits
+  # since the previous release call for (tools/release-version.sh, RELEASE.md,
+  # Choosing the version), so that nothing is approved, signed or published
+  # under a wrong number. Then it writes on the run's summary page the go.mod
+  # lines that changed since the previous release tag, which the approver
+  # checks (RELEASE.md, Approving a release). go.mod lists every module
+  # compiled into the provider.
   dependency-changes:
     # The registries ingest public repositories only.
     if: ${{ !github.event.repository.private }}
@@ -50,11 +54,49 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             github.com:443
+            release-assets.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the previous release tag and its go.mod
           persist-credentials: false
+
+      # Same method as the tools of security.yml: the expected hash is pinned
+      # here, not read from the release's checksums.txt, which comes from the
+      # same source. It was checked against that checksums.txt, whose Sigstore
+      # bundle verifies against svu's release workflow, and against the build
+      # provenance of the archive (gh attestation verify --repo caarlos0/svu).
+      # The same pin is in conventional-commits.yml, goreleaser-release.yml and
+      # release-reminder.yml: Renovate bumps the three and mise.toml in one pull
+      # request, the version only, so it fails until the three hashes are
+      # updated by hand.
+      - name: Install svu
+        env:
+          # renovate: datasource=github-releases depName=caarlos0/svu
+          SVU_VERSION: v3.4.4
+          SVU_SHA256: f113776c1c4c2a2a3c6e27991efaa8071aafc1ec5644fa77ff809ec69aacd5da
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/svu_linux_amd64.tar.gz"
+          curl -fsSL -o "${archive}" \
+            "https://github.com/caarlos0/svu/releases/download/${SVU_VERSION}/svu_${SVU_VERSION#v}_linux_amd64.tar.gz"
+          echo "${SVU_SHA256}  ${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/svu"
+          mkdir -p "${install_dir}"
+          tar xzf "${archive}" -C "${install_dir}" svu
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/svu" --version
+
+      # The tag cannot be deleted (version-tags ruleset): on a failure, tag the
+      # version the message gives, which `make release-version` prints too.
+      - name: Check the version of the tag
+        run: |
+          set -euo pipefail
+          if ! result=$(tools/release-version.sh check "${GITHUB_REF_NAME}" 2>&1); then
+            echo "::error title=Release::${result}. Nothing was approved, signed or published: tag the version that make release-version prints instead (RELEASE.md, Choosing the version)."
+            exit 1
+          fi
+          echo "${result}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - name: List the go.mod changes since the previous release
         run: |

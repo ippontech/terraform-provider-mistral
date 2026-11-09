@@ -140,6 +140,7 @@ make generate   # terraform fmt of the examples, then docs/
 make terraform-validate terraform-test-mock   # offline Terraform checks
 make testacc    # TF_ACC=1: live API, creates real objects
 make spec-drift # the operations the provider calls against the live specification
+make release-version # the version to tag next, from the Conventional Commits since the last release
 ```
 
 Tool versions are in `mise.toml`; CI pins the same ones.

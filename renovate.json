@@ -88,9 +88,10 @@
       "labels": ["dependencies", "release-tooling"]
     },
     {
-      "description": "A tool pinned in several files (mise.toml, a workflow, .pre-commit-config.yaml) is read by several managers, which the rules above put in different groups, so its pins drifted apart and two pull requests could edit the same line. Every manager reports the same packageName for it, so one group per packageName bumps all its pins in one pull request (and groupSlug, without the slash: an earlier rule's groupSlug would otherwise stay and put every tool in one branch). Last, so that it overrides the manager groups and the groupName null of the release tooling rule, whose labels GoReleaser keeps: GoReleaser still gets a pull request of its own. A workflow pin checked against a hash (gitleaks, poutine, tflint, zizmor) still needs the hash updated by hand.",
+      "description": "A tool pinned in several files (mise.toml, a workflow, .pre-commit-config.yaml) is read by several managers, which the rules above put in different groups, so its pins drifted apart and two pull requests could edit the same line. Every manager reports the same packageName for it, so one group per packageName bumps all its pins in one pull request (and groupSlug, without the slash: an earlier rule's groupSlug would otherwise stay and put every tool in one branch). Last, so that it overrides the manager groups and the groupName null of the release tooling rule, whose labels GoReleaser keeps: GoReleaser still gets a pull request of its own. A workflow pin checked against a hash (gitleaks, poutine, svu, tflint, zizmor) still needs the hash updated by hand.",
       "matchPackageNames": [
         "boostsecurityio/poutine",
+        "caarlos0/svu",
         "gitleaks/gitleaks",
         "golangci/golangci-lint",
         "goreleaser/goreleaser",

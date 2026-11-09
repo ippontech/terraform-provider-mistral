@@ -1,0 +1,92 @@
+name: Release Reminder
+
+# Keeps one open issue, "Unreleased changes", listing what main holds that no
+# release has published, and the version to tag next (tools/release-version.sh
+# pending). A maintainer still decides and tags each release by hand
+# (RELEASE.md, Cutting a release): this workflow only reminds. It can write
+# issues, and nothing else: no code, no tag, no release.
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  unreleased-changes:
+    # Releases are published from the public repository only.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden runner
+        # Free for public repositories only: skipped while the repository is private.
+        if: ${{ !github.event.repository.private }}
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            release-assets.githubusercontent.com:443
+
+      # main, whatever pushed: a tag run reads the release tag it just added.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0 # every release tag and the commits since the last one
+          persist-credentials: false
+
+      # Same method as the tools of security.yml: the expected hash is pinned
+      # here, not read from the release's checksums.txt, which comes from the
+      # same source. It was checked against that checksums.txt, whose Sigstore
+      # bundle verifies against svu's release workflow, and against the build
+      # provenance of the archive (gh attestation verify --repo caarlos0/svu).
+      # The same pin is in conventional-commits.yml, goreleaser-release.yml and
+      # release-reminder.yml: Renovate bumps the three and mise.toml in one pull
+      # request, the version only, so it fails until the three hashes are
+      # updated by hand.
+      - name: Install svu
+        env:
+          # renovate: datasource=github-releases depName=caarlos0/svu
+          SVU_VERSION: v3.4.4
+          SVU_SHA256: f113776c1c4c2a2a3c6e27991efaa8071aafc1ec5644fa77ff809ec69aacd5da
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/svu_linux_amd64.tar.gz"
+          curl -fsSL -o "${archive}" \
+            "https://github.com/caarlos0/svu/releases/download/${SVU_VERSION}/svu_${SVU_VERSION#v}_linux_amd64.tar.gz"
+          echo "${SVU_SHA256}  ${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/svu"
+          mkdir -p "${install_dir}"
+          tar xzf "${archive}" -C "${install_dir}" svu
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/svu" --version
+
+      # The body is built from git, with no expression of the event in the
+      # script, so a commit message cannot run as shell; gh reads it from a
+      # file. The issue is found by its exact title among the open ones.
+      - name: Update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Unreleased changes
+        run: |
+          set -euo pipefail
+          body="${RUNNER_TEMP}/unreleased.md"
+          tools/release-version.sh pending > "${body}"
+          number=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --limit 200 --json number,title \
+            --jq "map(select(.title == \"${TITLE}\")) | first | .number // empty")
+          if [ -n "${number}" ]; then
+            gh issue edit "${number}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --body-file "${body}"
+          fi
