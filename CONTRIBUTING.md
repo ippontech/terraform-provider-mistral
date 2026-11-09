@@ -32,12 +32,12 @@ Unit tests need neither. Never commit a key, and never paste one into an issue, 
 | `make testacc` | acceptance tests against the live API: they create real objects |
 | `make spec-drift` | the operations the provider calls against Mistral's live specification; `SPECDRIFT_FLAGS=-update` rewrites `tools/specdrift/fingerprints.txt` after a fake serves a new route |
 
-CI runs all of them except `make mutation`, `make testacc` and `make spec-drift`, plus gitleaks, govulncheck, actionlint, poutine, zizmor, tflint, `goreleaser check`, and an offline check that `tools/specdrift/fingerprints.txt` lists every route the fakes serve. `testacc.yml` runs the acceptance tests after each merge to `main` and on demand; `spec-drift.yml` compares the fingerprints with Mistral's specification every week and opens an issue labelled `spec-drift` on a change.
+CI runs all of them except `make mutation`, `make testacc` and `make spec-drift`, plus gitleaks, govulncheck, actionlint, poutine, zizmor, tflint, `goreleaser check`, and an offline check that `tools/specdrift/fingerprints.txt` lists every route the fakes serve. `testacc.yml` runs the acceptance tests after each merge to `main`, before each release and on demand; `semantic-release.yml` cuts one release a week, on Monday morning (RELEASE.md); `spec-drift.yml` compares the fingerprints with Mistral's specification every week and opens an issue labelled `spec-drift` on a change.
 
 ## Pull requests
 
 - **One issue per pull request**, and one pull request per coherent change: a feature with its tests, docs and examples, or a fix with the test that fails without it.
-- **Titles and commits** follow [Conventional Commits](https://www.conventionalcommits.org): `<type>[(scope)][!]: <subject>`, with type `feat`, `fix`, `perf`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build` or `ci`. The release notes group the commits by type, and the maintainer chooses the version from them (RELEASE.md). A breaking change takes `!` after the type (`feat(agents)!: ...`), and in 0.x it publishes a minor version. The `conventional-commits.yml` workflow checks the title and every commit of the pull request, since a rebase merge puts each commit on `main`; it refuses merge commits.
+- **Titles and commits** follow [Conventional Commits](https://www.conventionalcommits.org): `<type>[(scope)][!]: <subject>`, with type `feat`, `fix`, `perf`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build` or `ci`. semantic-release reads the commits merged since the last release: their types choose the version and group the release notes (RELEASE.md, Versions), so a title decides what users get. A breaking change takes `!` after the type (`feat(agents)!: ...`), and in 0.x it publishes a minor version. Never write `BREAKING CHANGE:` or `Breaking change:` at the start of a line of a description unless the change is one: semantic-release reads such a line as a breaking change, whatever follows it. The `conventional-commits.yml` workflow checks the title and every commit of the pull request, since a rebase merge puts each commit on `main`; it refuses merge commits.
 - **Code** follows *Code and comments* in `CLAUDE.md`: names that say what a value is, a doc comment on every type and function, a comment next to every choice the code cannot explain by itself.
 - **Merges** are squash or rebase only: the history of `main` is linear.
 - **Stacking.** A pull request that depends on another targets that pull request's branch, so its diff shows only its own changes. Once the base is merged, rebase it onto `main`.
@@ -49,7 +49,7 @@ See *Adding a resource or data source* in `CLAUDE.md`. In short: the type and it
 
 ## Dependency updates
 
-Renovate opens the dependency pull requests, after a 3-day delay and without merging them. Go toolchain and indirect module updates are typed `fix(deps)`, so that the release notes list them under Fixes and the next release is at least a patch. A human reviews every bump of the release tooling.
+Renovate opens the dependency pull requests, after a 3-day delay and without merging them. Go toolchain and indirect module updates are typed `fix(deps)`, so that the release notes list them under Bug Fixes and the next release is at least a patch; a `deps` scope never cuts more than the patch its type gives, whatever the description says. A human reviews every bump of the release tooling: GoReleaser, the GPG import action, the semantic-release packages and the actions of its workflow.
 
 ## Claude Code
 

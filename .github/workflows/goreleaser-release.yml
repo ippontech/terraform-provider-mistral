@@ -1,8 +1,9 @@
 name: GoReleaser Release
 
-# Builds, signs and publishes a release when a maintainer pushes a version tag
-# on a commit of main (RELEASE.md, Cutting a release). The Terraform Registry
-# and the OpenTofu Registry ingest the GitHub release.
+# Builds and signs the archives of a release, and attaches them to its GitHub
+# release, when semantic-release pushes a version tag on main
+# (semantic-release.yml; RELEASE.md, How a release is cut). The Terraform
+# Registry and the OpenTofu Registry ingest the GitHub release.
 #
 # The job holds the signing key, so it follows the rules for privileged jobs
 # (RELEASE.md, Release security):
@@ -13,8 +14,9 @@ name: GoReleaser Release
 #     in the job that signs;
 #   - the checkout keeps no credential (persist-credentials: false), and the
 #     modules are verified against go.sum before the build;
-#   - tags are protected by a ruleset (RELEASE.md), so only repository
-#     admins create them, and nobody moves or deletes them;
+#   - tags are protected by a ruleset (RELEASE.md), so only the
+#     semantic-release App and repository admins create them, and nobody
+#     moves or deletes them;
 #   - the tagged commit must be on main, so that a release ships only what
 #     the pull request checks accepted.
 on:
@@ -29,16 +31,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Runs before the approval that releases the GPG key, with no secret. It
-  # stops the run when the tag is below the version the Conventional Commits
-  # since the last published release call for, or not above every other
-  # release tag (tools/release-version.sh, RELEASE.md, Choosing the version),
-  # so that nothing is approved, signed or published under a wrong number.
-  # Then it writes on the run's summary page the go.mod lines that changed
-  # since the last published release, which the approver checks (RELEASE.md,
-  # Approving a release); go.mod lists every module compiled into the
-  # provider. It hands that release to the release job, whose notes start
-  # there: a tag whose release was refused never cuts them short.
+  # Runs before the approval that releases the GPG key, with no secret: it
+  # writes on the run's summary page the go.mod lines that changed since the
+  # last release that shipped signed binaries (tools/previous-release.sh), which
+  # the approver checks (RELEASE.md, Approving a release); go.mod lists every
+  # module compiled into the provider. A version tagged but never signed (its
+  # signing refused, its release deleted) is not a baseline: its changes are
+  # listed again rather than shipping unseen, and the summary names it.
   dependency-changes:
     # The registries ingest public repositories only.
     if: ${{ !github.event.repository.private }}
@@ -64,23 +63,18 @@ jobs:
           fetch-depth: 0 # the previous release tag and its go.mod
           persist-credentials: false
 
-      # The tag cannot be deleted (version-tags ruleset): on a failure, tag the
-      # version the message gives, which `make release-version` prints too. gh
-      # reads the last published release with the read-only token of the job.
-      - name: Check the version of the tag
+      # From the parent of the tagged commit, so that the tag under release is
+      # never its own baseline; gh reads the assets of each release with the
+      # read-only token of the job.
+      - name: Find the last release with signed binaries
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! result=$(tools/release-version.sh check "${GITHUB_REF_NAME}" 2>&1); then
-            echo "::error title=Release::${result}. Nothing was approved, signed or published: tag the version that make release-version prints instead (RELEASE.md, Choosing the version)."
-            exit 1
-          fi
-          echo "${result}" | tee -a "${GITHUB_STEP_SUMMARY}"
-          echo "previous=$(tools/release-version.sh previous HEAD^)" >> "${GITHUB_OUTPUT}"
+          echo "previous=$(tools/previous-release.sh "${GITHUB_SHA}^")" >> "${GITHUB_OUTPUT}"
 
-      - name: List the go.mod changes since the last published release
+      - name: List the go.mod changes since the last signed release
         env:
           PREVIOUS: ${{ steps.version.outputs.previous }}
         run: |
@@ -88,9 +82,14 @@ jobs:
           {
             if [ -n "${PREVIOUS}" ]; then
               previous=${PREVIOUS}
+              unsigned=$(git tag --merged "${GITHUB_SHA}^" --list 'v[0-9]*.[0-9]*.[0-9]*' --no-merged "${previous}" | grep -v -- - | sort -V | tr '\n' ' ')
               changes=$(git diff --unified=0 "${previous}" "${GITHUB_SHA}" -- go.mod | grep -E '^[-+][^-+]' || true)
               echo "## go.mod changes from ${previous} to ${GITHUB_REF_NAME}"
               echo
+              if [ -n "${unsigned}" ]; then
+                echo "${previous} is the last release with signed binaries. Tagged but never signed, so included here: ${unsigned}."
+                echo
+              fi
               if [ -z "${changes}" ]; then
                 echo "None: this release compiles the same modules as ${previous}."
               else
@@ -105,7 +104,7 @@ jobs:
             else
               echo "## Modules of ${GITHUB_REF_NAME}, the first release"
               echo
-              echo "No published release yet: every module of go.mod ships for the first time."
+              echo "No release with signed binaries yet: every module of go.mod ships for the first time."
               echo
               echo '```'
               awk '/^require \(/ { inside = 1; next } inside && /^\)/ { inside = 0 } inside || /^(go|toolchain|require) [^(]/' go.mod
@@ -205,10 +204,3 @@ jobs:
           # v1.0.0-rc.1 and the run of v1.0.0 on the same commit would build
           # the same version.
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
-          # The notes start at the last published release, read by the
-          # dependency-changes job: without it GoReleaser starts at the nearest
-          # earlier tag, which may be a tag whose release was refused, or a
-          # pre-release, and the notes would leave out their commits. Empty
-          # while no release is published: GoReleaser then looks for the
-          # nearest earlier tag itself.
-          GORELEASER_PREVIOUS_TAG: ${{ needs.dependency-changes.outputs.previous }}

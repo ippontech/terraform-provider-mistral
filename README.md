@@ -7,7 +7,7 @@ A Terraform and OpenTofu provider for [Mistral AI](https://mistral.ai):
 
 **Alpha.** No resource or data source has been tested against the live Mistral API yet: each one is tested against a fake of the API written from Mistral's documentation, and its documentation page says so. Until 1.0.0, a minor version can rename or change attributes and behaviors: pin the provider version and read the release notes before upgrading.
 
-Releases are published as `ippontech/mistral` on the Terraform Registry and the OpenTofu Registry, from `v0.1.0`.
+Releases are published as `ippontech/mistral` on the Terraform Registry and the OpenTofu Registry, from `v0.1.0`. A release is cut every Monday from the commits merged since the previous one (`RELEASE.md`, `CHANGELOG.md`).
 
 ## Usage
 

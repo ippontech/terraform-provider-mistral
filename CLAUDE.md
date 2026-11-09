@@ -114,7 +114,7 @@ Fake-API tests live in `package <area>_test`, in files named `<name>_fake_test.g
 
 Everything else is a canned response set up by the test that needs it. A fake encodes our reading of the documentation: when an acceptance run contradicts it, fix the fake first.
 
-**Acceptance tests** run against a dedicated Mistral organization, after every merge to `main` and on demand, never automatically on a pull request from a fork. Until Mistral grants Enterprise access, the Admin API types stay `fakeOnly` and their pages say they were not verified against the live API. While no type is `acceptanceTested`, the provider is an alpha: the index page opens with the alpha notice (`~> **Alpha.**`), and `internal/provider/docs_test.go` fails when the notice and the registry disagree, so the first type that passes an acceptance test also calls for rewording the provider's status.
+**Acceptance tests** run against a dedicated Mistral organization, after every merge to `main`, before each release and on demand, never automatically on a pull request from a fork. Until Mistral grants Enterprise access, the Admin API types stay `fakeOnly` and their pages say they were not verified against the live API. While no type is `acceptanceTested`, the provider is an alpha: the index page opens with the alpha notice (`~> **Alpha.**`), and `internal/provider/docs_test.go` fails when the notice and the registry disagree, so the first type that passes an acceptance test also calls for rewording the provider's status.
 
 **Native tests**: a `tests/<name>.tftest.hcl` with `mock_provider` runs offline on every pull request and must never need a credential; a test file without `mock_provider` calls the live API and runs in the acceptance workflow only. Never mix the two in one file.
 
@@ -140,15 +140,13 @@ make generate   # terraform fmt of the examples, then docs/
 make terraform-validate terraform-test-mock   # offline Terraform checks
 make testacc    # TF_ACC=1: live API, creates real objects
 make spec-drift # the operations the provider calls against the live specification
-make release-version # the version to tag next, from the Conventional Commits since the last published release
-make release-tag     # tags main with that version and pushes the tag, once the maintainer confirms (RELEASE.md)
 ```
 
 Tool versions are in `mise.toml`; CI pins the same ones.
 
 ## Working rules
 
-- One issue per pull request, one pull request per coherent change. The title and every commit follow Conventional Commits (`feat(agents): ...`): CI checks both, and the commit-msg hook runs the same script (`tools/conventional-commits.sh`). Merges are squash or rebase only, and a branch catches up with a rebase: there are no merge commits.
+- One issue per pull request, one pull request per coherent change. The title and every commit follow Conventional Commits (`feat(agents): ...`): CI checks both, the commit-msg hook runs the same script (`tools/conventional-commits.sh`), and semantic-release cuts the version from them every Monday (`RELEASE.md`). Merges are squash or rebase only, and a branch catches up with a rebase: there are no merge commits.
 - Pull requests are stacked while their base is not merged: each targets the branch it builds on.
 - A sub-agent commits locally and never pushes, never comments on GitHub, never reads `.env`, and never calls the live API. The session that briefed it reviews and pushes.
 - Never run `make testacc` or an acceptance test unless you were asked to: it creates real objects in a real organization.

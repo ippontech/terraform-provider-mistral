@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Checks messages against Conventional Commits, the format the release notes
-# group commits by (.goreleaser.yml, changelog) and the maintainer reads to
-# choose the next version (RELEASE.md).
+# Checks messages against Conventional Commits, the format semantic-release
+# reads to choose the next version and group the release notes (.releaserc,
+# RELEASE.md).
 #
 #   tools/conventional-commits.sh title             # TITLE: a PR title
 #   tools/conventional-commits.sh message <file>    # a commit message file (the commit-msg hook)
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # The types of CONTRIBUTING.md. `feature`, an alias of some presets, is left
-# out: no group of the release notes matches it.
+# out: no release rule of .releaserc matches it.
 readonly types='feat|fix|perf|revert|docs|style|chore|refactor|test|build|ci'
 readonly subject_pattern="^(${types})(\([^()]+\))?(!)?: [^[:space:]]"
 
