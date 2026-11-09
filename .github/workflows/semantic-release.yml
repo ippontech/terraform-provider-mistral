@@ -21,13 +21,6 @@ on:
 
 permissions: {}
 
-# Same group as testacc.yml, so a release waits for a push run still testing
-# (and the reverse): two live test runs at once would collide in the test
-# organization.
-concurrency:
-  group: acctest
-  cancel-in-progress: false
-
 jobs:
   # Goes on only when a commit since the last tag would cut a version;
   # otherwise the live test run would create objects in the test organization
@@ -103,6 +96,16 @@ jobs:
   acceptance-tests:
     needs: pending
     if: needs.pending.outputs.release == 'true'
+    # Same group as the push runs of testacc.yml, so a release waits for a
+    # push run still testing (and the reverse): two live test runs at once
+    # would collide in the test organization. On this job, not the workflow:
+    # GitHub keeps one pending run per group, and a run that tests nothing
+    # (nothing to release, or the retry after a morning release) would
+    # otherwise cancel a push run waiting for its turn, whose merge would then
+    # get no live test.
+    concurrency:
+      group: acctest
+      cancel-in-progress: false
     # `./`, this repository at this commit, rather than GitHub's `$/` form of
     # the same reference that zizmor prefers (self-repository): actionlint
     # v1.7.12 rejects the latter (workflow-call).

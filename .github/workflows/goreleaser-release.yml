@@ -1,9 +1,12 @@
 name: GoReleaser Release
 
-# Builds and signs the archives of a release, and attaches them to its GitHub
-# release, when semantic-release pushes a version tag on main
-# (semantic-release.yml; RELEASE.md, How a release is cut). The Terraform
-# Registry and the OpenTofu Registry ingest the GitHub release.
+# Builds and signs the archives of a release, attaches them to its GitHub
+# release and publishes it, when semantic-release pushes a version tag on main
+# (semantic-release.yml; RELEASE.md, How a release is cut). semantic-release
+# creates the release as a draft, with its notes; GoReleaser uploads into the
+# draft and publishes it last, so that the Terraform Registry, whose webhook
+# reads a release when it is published, finds the archives and the signature
+# there. The OpenTofu Registry ingests the published release too.
 #
 # The job holds the signing key, so it follows the rules for privileged jobs
 # (RELEASE.md, Release security):
@@ -26,8 +29,12 @@ on:
 
 permissions: {}
 
+# One group per tag, not one for the workflow: GitHub keeps a single pending
+# run per group, so with one group a run waiting for its approval behind
+# another would be cancelled by the next tag, and its version would stay a
+# draft with no asset for good. Two tags signing at once share nothing.
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -82,7 +89,9 @@ jobs:
           {
             if [ -n "${PREVIOUS}" ]; then
               previous=${PREVIOUS}
-              unsigned=$(git tag --merged "${GITHUB_SHA}^" --list 'v[0-9]*.[0-9]*.[0-9]*' --no-merged "${previous}" | grep -v -- - | sort -V | tr '\n' ' ')
+              # `|| true`: with no such tag, the usual case, grep exits 1 and
+              # pipefail would fail the step.
+              unsigned=$(git tag --merged "${GITHUB_SHA}^" --list 'v[0-9]*.[0-9]*.[0-9]*' --no-merged "${previous}" | grep -v -- - | sort -V | tr '\n' ' ' || true)
               changes=$(git diff --unified=0 "${previous}" "${GITHUB_SHA}" -- go.mod | grep -E '^[-+][^-+]' || true)
               echo "## go.mod changes from ${previous} to ${GITHUB_REF_NAME}"
               echo

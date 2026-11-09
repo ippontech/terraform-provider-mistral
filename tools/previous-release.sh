@@ -15,9 +15,11 @@
 # version tagged but never signed is skipped, so its module changes are listed
 # again rather than shipping unseen, and a failed API call counts as unsigned,
 # which widens the comparison and never narrows it. Pre-release tags are left
-# out. The release job calls it with the parent of the tagged commit, so that
-# the tag under release is never its own baseline. Without gh, the newest
-# release tag stands for the last signed release, with a warning.
+# out. A release still a draft, its signing refused or pending, is not served
+# by the releases/tags endpoint (a 404), so it counts as unsigned too. The
+# release job calls it with the parent of the tagged commit, so that the tag
+# under release is never its own baseline. Without gh, the newest release tag
+# stands for the last signed release, with a warning.
 set -euo pipefail
 # A failure inside a command substitution stops the script on bash 4.4 and
 # later; every substitution also checks its status, for the bash 3.2 of macOS.

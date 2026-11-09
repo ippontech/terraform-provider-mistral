@@ -69,20 +69,21 @@ release:
     - glob: 'terraform-registry-manifest.json'
       name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
   # The GitHub release exists before this build runs: semantic-release creates
-  # it, with its notes, right after it pushes the tag. GoReleaser then only
-  # attaches the archives, the manifest, the checksums and the signature to
-  # it, and leaves its name and notes as they are; the default, replace,
-  # would overwrite the notes with the (disabled) changelog below. A release
-  # that does not exist yet, after a tag pushed by hand, is created with
-  # empty notes.
+  # it as a draft, with its notes, right after it pushes the tag
+  # (draftRelease in .releaserc). GoReleaser attaches the archives, the
+  # manifest, the checksums and the signature to that draft and leaves its
+  # name and notes as they are (the default, replace, would overwrite the
+  # notes with the disabled changelog below), then publishes it (draft:
+  # false): the Terraform Registry reads a release when it is published, and
+  # finds the assets there. A release that does not exist yet, after a tag
+  # pushed by hand, is created with empty notes.
   mode: keep-existing
+  draft: false
   # A tag with a pre-release suffix (v1.0.0-rc.1, which the tag filter of
   # goreleaser-release.yml also matches) publishes a GitHub pre-release, which
   # never becomes the repository's latest release. semantic-release cuts none
   # from main (RELEASE.md, Versions).
   prerelease: auto
-  # If you want to manually examine the release before its live, uncomment this line:
-  # draft: true
 # The release notes are semantic-release's (.releaserc, release-notes-generator
 # with the conventionalcommits preset): the commits since the previous tag,
 # grouped by their Conventional Commits type, with a link to each commit and

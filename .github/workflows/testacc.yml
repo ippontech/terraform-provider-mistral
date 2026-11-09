@@ -33,8 +33,9 @@ on:
 
 permissions: {}
 
-# On a push or a manual run, the same group as semantic-release.yml, so one
-# live test run exists at a time: two would collide in the test organization.
+# On a push or a manual run, the same group as the acceptance-tests job of
+# semantic-release.yml, so one live test run exists at a time: two would
+# collide in the test organization.
 # When several pushes queue up, only the newest waiting run starts. A called
 # run already sits in its caller's group: giving it the same one here would
 # queue it behind the caller that holds it (the GitHub docs warn of the
@@ -49,9 +50,17 @@ concurrency:
 
 jobs:
   testacc:
-    # Skipped on the push of a release commit; a called or manual run always
-    # goes on, when the variable allows.
-    if: vars.MISTRAL_ACCTEST == 'true' && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):'))
+    # Skipped on the push of the release commit, told apart by its subject and
+    # by its content, CHANGELOG.md alone (.releaserc, the git plugin): a pull
+    # request titled chore(release) that changes code still gets its run. A
+    # called or manual run always goes on, when the variable allows.
+    if: >-
+      vars.MISTRAL_ACCTEST == 'true'
+      && !(github.event_name == 'push'
+        && startsWith(github.event.head_commit.message, 'chore(release):')
+        && join(github.event.head_commit.added) == ''
+        && join(github.event.head_commit.removed) == ''
+        && join(github.event.head_commit.modified) == 'CHANGELOG.md')
     runs-on: ubuntu-latest
     timeout-minutes: 130
     environment: acctest
