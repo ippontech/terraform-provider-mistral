@@ -34,6 +34,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read # the other runs of this workflow, for the retry
     outputs:
       release: ${{ steps.check.outputs.release }}
     steps:
@@ -70,6 +71,7 @@ jobs:
         id: check
         env:
           SCHEDULE: ${{ github.event.schedule }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # Two lines on stdout, `last_tag=` and `release_type=`; the analysis
@@ -83,17 +85,21 @@ jobs:
           if [ "${type}" = none ]; then
             release=false
           fi
-          # The retry run never cuts a second version in a day. Any version tag
-          # made today counts, not only the newest one before HEAD: the retry
-          # starts from the commit that triggered it, which predates a release
-          # commit pushed after 12:23, so `last` would miss that tag.
+          # The retry run never cuts a second version in a day: not when the
+          # morning run released (its tag is dated today), and not while the
+          # morning run is still testing or releasing (another run of this
+          # workflow is in progress; the checkout predates its release commit,
+          # so the tag cannot tell), where the retry would run the two-hour
+          # live suite for a release the morning run cuts.
           if [ "${SCHEDULE}" = "23 12 * * 1" ]; then
-            today=$(date -u +%F)
-            while read -r tag; do
-              if [ "$(git log -1 --format=%cs "${tag}")" = "${today}" ]; then
-                release=false
-              fi
-            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*')
+            if [ -n "${last}" ] && [ "$(git log -1 --format=%cs "${last}")" = "$(date -u +%F)" ]; then
+              release=false
+            fi
+            others=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/semantic-release.yml/runs?status=in_progress&per_page=100" \
+              --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})] | length")
+            if [ "${others}" != 0 ]; then
+              release=false
+            fi
           fi
           echo "release=${release}" >> "${GITHUB_OUTPUT}"
           echo "Release type since ${last:-the first commit}: ${type}. Cut in this run: ${release}." >> "${GITHUB_STEP_SUMMARY}"
