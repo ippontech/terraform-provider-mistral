@@ -79,6 +79,10 @@ release:
   # pushed by hand, is created with empty notes.
   mode: keep-existing
   draft: false
+  # GitHub's get-release-by-tag call, which GoReleaser uses to find an existing
+  # release, answers 404 for a draft: without this key keep-existing never sees
+  # semantic-release's draft and a second, published release is created.
+  use_existing_draft: true
   # A tag with a pre-release suffix (v1.0.0-rc.1, which the tag filter of
   # goreleaser-release.yml also matches) publishes a GitHub pre-release, which
   # never becomes the repository's latest release. semantic-release cuts none
