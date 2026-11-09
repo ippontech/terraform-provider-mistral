@@ -198,6 +198,12 @@ expect_in 'gh is the source of pending' "$(FAKE_GH_RELEASE=v0.1.0 "${script}" pe
 expect 'without gh' v0.2.1 env FAKE_GH_FAIL=1 "${script}" next
 expect_in 'without gh, a warning' "$(FAKE_GH_FAIL=1 "${script}" next 2>&1 >/dev/null)" 'the last release tag stands for the last published release'
 expect_in 'without gh, pending' "$(FAKE_GH_FAIL=1 "${script}" pending 2>/dev/null)" 'since v0.2.0'
+expect 'previous from gh' v0.1.0 env FAKE_GH_RELEASE=v0.1.0 "${script}" previous
+# check runs on the tagged commit: without gh, the previous release is the
+# last release tag before it, never the tag under check.
+git tag v0.2.1
+expect 'without gh, check' 'v0.2.1: at least v0.2.1, the lowest version the commits since v0.2.0 and the existing tags allow' env FAKE_GH_FAIL=1 "${script}" check v0.2.1
+expect 'without gh, previous before a tag' v0.2.0 env FAKE_GH_FAIL=1 "${script}" previous HEAD^
 
 # tag: from an up-to-date, clean main, once the version is confirmed.
 published v0.1.0

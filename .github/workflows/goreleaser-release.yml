@@ -33,10 +33,12 @@ jobs:
   # stops the run when the tag is below the version the Conventional Commits
   # since the last published release call for, or not above every other
   # release tag (tools/release-version.sh, RELEASE.md, Choosing the version),
-  # so that nothing is approved, signed or published under a wrong number. Then it writes on the run's summary page the go.mod
-  # lines that changed since the previous release tag, which the approver
-  # checks (RELEASE.md, Approving a release). go.mod lists every module
-  # compiled into the provider.
+  # so that nothing is approved, signed or published under a wrong number.
+  # Then it writes on the run's summary page the go.mod lines that changed
+  # since the last published release, which the approver checks (RELEASE.md,
+  # Approving a release); go.mod lists every module compiled into the
+  # provider. It hands that release to the release job, whose notes start
+  # there: a tag whose release was refused never cuts them short.
   dependency-changes:
     # The registries ingest public repositories only.
     if: ${{ !github.event.repository.private }}
@@ -44,6 +46,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    outputs:
+      previous: ${{ steps.version.outputs.previous }}
     steps:
       - name: Harden runner
         # Free for public repositories only: skipped while the repository is private.
@@ -64,6 +68,7 @@ jobs:
       # version the message gives, which `make release-version` prints too. gh
       # reads the last published release with the read-only token of the job.
       - name: Check the version of the tag
+        id: version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -73,12 +78,16 @@ jobs:
             exit 1
           fi
           echo "${result}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "previous=$(tools/release-version.sh previous HEAD^)" >> "${GITHUB_OUTPUT}"
 
-      - name: List the go.mod changes since the previous release
+      - name: List the go.mod changes since the last published release
+        env:
+          PREVIOUS: ${{ steps.version.outputs.previous }}
         run: |
           set -euo pipefail
           {
-            if previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "${GITHUB_SHA}^" 2>/dev/null); then
+            if [ -n "${PREVIOUS}" ]; then
+              previous=${PREVIOUS}
               changes=$(git diff --unified=0 "${previous}" "${GITHUB_SHA}" -- go.mod | grep -E '^[-+][^-+]' || true)
               echo "## go.mod changes from ${previous} to ${GITHUB_REF_NAME}"
               echo
@@ -96,7 +105,7 @@ jobs:
             else
               echo "## Modules of ${GITHUB_REF_NAME}, the first release"
               echo
-              echo "No previous release tag: every module of go.mod ships for the first time."
+              echo "No published release yet: every module of go.mod ships for the first time."
               echo
               echo '```'
               awk '/^require \(/ { inside = 1; next } inside && /^\)/ { inside = 0 } inside || /^(go|toolchain|require) [^(]/' go.mod
@@ -196,3 +205,10 @@ jobs:
           # v1.0.0-rc.1 and the run of v1.0.0 on the same commit would build
           # the same version.
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+          # The notes start at the last published release, read by the
+          # dependency-changes job: without it GoReleaser starts at the nearest
+          # earlier tag, which may be a tag whose release was refused, or a
+          # pre-release, and the notes would leave out their commits. Empty
+          # while no release is published: GoReleaser then looks for the
+          # nearest earlier tag itself.
+          GORELEASER_PREVIOUS_TAG: ${{ needs.dependency-changes.outputs.previous }}

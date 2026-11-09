@@ -11,6 +11,8 @@
 #                                   every other release tag
 #   release-version.sh pending      prints, in Markdown, what main holds that no
 #                                   release has published, and the next version
+#   release-version.sh previous [<commit>]
+#                                   prints the last published release
 #   release-version.sh tag          tags HEAD, an up-to-date and clean main,
 #                                   with the next version and pushes the tag,
 #                                   once the maintainer types that version (or
@@ -60,7 +62,9 @@ newer() {
 	[[ "${a}" != "${b}" && "$(printf '%s\n%s\n' "${a#v}" "${b#v}" | sort -V | tail -n 1)" == "${a#v}" ]]
 }
 
-# published prints the tag of the last published release, or nothing.
+# published prints the tag of the last published release, or nothing. Without
+# gh, it falls back on the last release tag reachable from the commit $1, the
+# parent of HEAD when HEAD carries the tag under check.
 published() {
 	local tag
 	if [[ -n "${RELEASE_VERSION_PREVIOUS+set}" ]]; then
@@ -73,7 +77,7 @@ published() {
 		return
 	fi
 	echo "release-version: gh cannot list the releases; the last release tag stands for the last published release" >&2
-	git describe --tags --abbrev=0 --match "${release_pattern}" --exclude '*-*' HEAD 2>/dev/null || true
+	git describe --tags --abbrev=0 --match "${release_pattern}" --exclude '*-*' "$1" 2>/dev/null || true
 }
 
 # highest prints the highest release tag, pre-releases and the tag $1 excluded,
@@ -133,7 +137,7 @@ above() {
 mode=${1:-}
 case "${mode}" in
 next)
-	previous=$(published) || exit 1
+	previous=$(published HEAD) || exit 1
 	min=$(minimum "${previous}") || exit 1
 	if [[ -n "${previous}" && "${min}" == "${previous}" ]]; then
 		echo "release-version: only chore, ci, test or style commits since ${previous}: nothing to release" >&2
@@ -147,7 +151,7 @@ check)
 		echo "release-version: ${tag} does not point at HEAD" >&2
 		exit 2
 	fi
-	previous=$(published) || exit 1
+	previous=$(published HEAD^) || exit 1
 	min=$(minimum "${previous}") || exit 1
 	if [[ -n "${previous}" && "${min}" == "${previous}" ]]; then
 		echo "release-version: ${tag}, but only chore, ci, test or style commits since ${previous}: nothing to release" >&2
@@ -162,7 +166,7 @@ check)
 	echo "${tag}: at least ${want}, the lowest version the commits since ${previous:-the first commit} and the existing tags allow"
 	;;
 pending)
-	previous=$(published) || exit 1
+	previous=$(published HEAD) || exit 1
 	min=$(minimum "${previous}") || exit 1
 	range=${previous:+${previous}..}HEAD
 	echo "Changes on \`main\` that no release has published yet, since ${previous:-the first commit}. Updated by \`release-reminder.yml\` on every push to \`main\` and every release tag."
@@ -196,7 +200,7 @@ tag)
 		echo "release-version: HEAD is not origin/main; check out an up-to-date main" >&2
 		exit 1
 	fi
-	previous=$(published) || exit 1
+	previous=$(published HEAD) || exit 1
 	min=$(minimum "${previous}") || exit 1
 	if [[ -n "${previous}" && "${min}" == "${previous}" ]]; then
 		echo "release-version: only chore, ci, test or style commits since ${previous}: nothing to release" >&2
@@ -216,8 +220,14 @@ tag)
 	git tag -a "${version}" -m "${version}" HEAD
 	git push origin "${version}"
 	;;
+previous)
+	# The last published release, as check reads it on the commit $2: the
+	# release job gives it to the summary of go.mod changes and to GoReleaser,
+	# so that a refused tag never cuts the notes or the summary short.
+	published "${2:-HEAD}"
+	;;
 *)
-	echo "usage: release-version.sh next | check <tag> | pending | tag" >&2
+	echo "usage: release-version.sh next | check <tag> | pending | tag | previous [<commit>]" >&2
 	exit 2
 	;;
 esac
