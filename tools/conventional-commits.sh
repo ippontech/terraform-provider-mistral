@@ -11,7 +11,12 @@
 # a rebase merge puts every commit of the branch there. Both are checked, with
 # the same rules:
 #
-# - the subject is "<type>[(scope)][!]: <subject>", or a "Revert "..."" subject;
+# - the subject is "<type>[(scope)][!]: <subject>", or, for a commit (not a PR
+#   title), a "Revert "..."" subject: git's own revert carries the
+#   "This reverts commit <sha>." line the release parser needs. A PR title may
+#   not be one: a squash merge replaces that line with the PR description, the
+#   parser sees no type and no revert, and the release is skipped. Use
+#   "revert: ..." instead;
 # - in a range, no merge commit: main has a linear history, and a branch
 #   catches up with a rebase.
 set -euo pipefail
@@ -85,6 +90,9 @@ read_subject() {
 
 case "${1:-}" in
 title)
+	if [[ "${TITLE:-}" =~ ^Revert\ \" ]]; then
+		fail "PR title: '${TITLE}' is a Revert subject, which a squash merge leaves unrecognised by semantic-release (no release, no release note). Write 'revert: <subject>' instead."
+	fi
 	check "PR title" "${TITLE:?TITLE is not set}"
 	;;
 message)

@@ -83,10 +83,17 @@ jobs:
           if [ "${type}" = none ]; then
             release=false
           fi
-          # The retry run never cuts a second version in a day.
-          if [ "${SCHEDULE}" = "23 12 * * 1" ] && [ -n "${last}" ] \
-            && [ "$(git log -1 --format=%cs "${last}")" = "$(date -u +%F)" ]; then
-            release=false
+          # The retry run never cuts a second version in a day. Any version tag
+          # made today counts, not only the newest one before HEAD: the retry
+          # starts from the commit that triggered it, which predates a release
+          # commit pushed after 12:23, so `last` would miss that tag.
+          if [ "${SCHEDULE}" = "23 12 * * 1" ]; then
+            today=$(date -u +%F)
+            while read -r tag; do
+              if [ "$(git log -1 --format=%cs "${tag}")" = "${today}" ]; then
+                release=false
+              fi
+            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*')
           fi
           echo "release=${release}" >> "${GITHUB_OUTPUT}"
           echo "Release type since ${last:-the first commit}: ${type}. Cut in this run: ${release}." >> "${GITHUB_STEP_SUMMARY}"
