@@ -120,9 +120,20 @@ terraform-test: install .dev.tfrc
 # tools/specdrift/fingerprints.txt, against the live specification (never
 # committed: it has no licence). SPECDRIFT_FLAGS=-update rewrites them.
 SPEC_URL ?= https://docs.mistral.ai/openapi.yaml
+# The version to tag for the next release, from the Conventional Commits since
+# the last published release (tools/release-version.sh, RELEASE.md, Choosing
+# the version); gh, when logged in, says which release was last published.
+release-version:
+	tools/release-version.sh next
+
+# Tags an up-to-date, clean main with that version and pushes the tag, once
+# the maintainer types the version (or passes CONFIRM=<version>).
+release-tag:
+	RELEASE_CONFIRM="$(CONFIRM)" tools/release-version.sh tag
+
 spec-drift:
 	@spec=$$(mktemp); trap 'rm -f "$$spec"' EXIT; \
 	curl -sSf --retry 3 -o "$$spec" $(SPEC_URL) && \
 	go run -C tools ./specdrift -spec "$$spec" -root .. $(SPECDRIFT_FLAGS)
 
-.PHONY: spec-drift build install fmt tidy-check lint complexity generate test cover mutation testacc terraform-fmt-check terraform-validate terraform-test-mock terraform-test
+.PHONY: release-version release-tag spec-drift build install fmt tidy-check lint complexity generate test cover mutation testacc terraform-fmt-check terraform-validate terraform-test-mock terraform-test

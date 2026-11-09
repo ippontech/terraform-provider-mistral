@@ -37,6 +37,10 @@ jobs:
       - name: Test the check
         run: tools/conventional-commits_test.sh
 
+      # The release version follows the same types (tools/release-version.sh).
+      - name: Test the release version
+        run: tools/release-version_test.sh
+
       # In the merge queue the title was already checked on the pull request;
       # the job still runs so that a required check reports there too.
       - name: Check the PR title
