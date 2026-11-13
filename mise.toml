@@ -1,6 +1,6 @@
 # Local tool versions. CI pins the same ones in .github/workflows/.
 [tools]
-go = "1.27.3"
+go = "1.27.4"
 golangci-lint = "2.15.0"
 goreleaser = "2.20.0"
 terraform = "1.17.1"
