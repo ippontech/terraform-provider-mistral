@@ -41,7 +41,7 @@ jobs:
       - name: Harden runner
         # Free for public repositories only: skipped while the repository is private.
         if: ${{ !github.event.repository.private }}
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
           # raw.githubusercontent.com, go.dev, dl.google.com: setup-go's
@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
 
       # No cache: this job holds the keys of the test organization.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: 'go.mod'
           cache: false
